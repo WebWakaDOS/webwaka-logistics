@@ -4,4 +4,5 @@
  */
 
 export type * from "../drizzle/schema";
+export { PARCEL_STATUS, PARCEL_PRIORITY } from "../drizzle/schema";
 export * from "./_core/errors";

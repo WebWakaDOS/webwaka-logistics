@@ -21,15 +21,19 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, PanelLeft, Users } from "lucide-react";
+import { LayoutDashboard, LogOut, Package, Plus, Search, PanelLeft } from "lucide-react";
+import { LanguageSwitcher } from "./LanguageSwitcher";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
+/** LOG-2 Logistics navigation items [Part 10.4] */
 const menuItems = [
-  { icon: LayoutDashboard, label: "Page 1", path: "/" },
-  { icon: Users, label: "Page 2", path: "/some-path" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
+  { icon: Package, label: "Parcels", path: "/parcels" },
+  { icon: Plus, label: "New Parcel", path: "/parcels/new" },
+  { icon: Search, label: "Track", path: "/track" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -255,6 +259,7 @@ function DashboardLayoutContent({
                 </div>
               </div>
             </div>
+            <LanguageSwitcher />
           </div>
         )}
         <main className="flex-1 p-4">{children}</main>
