@@ -11,7 +11,7 @@ import { PARCEL_PRIORITY, PARCEL_STATUS } from "../../drizzle/schema";
 import { storagePut } from "../storage";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { createLogger } from "../logger";
-import { publishEvent } from "../eventBus";
+import { emitEvent } from "@webwaka/core";
 import {
   addParcelUpdate,
   createParcel,
