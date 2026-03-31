@@ -93,6 +93,22 @@ function runMigrations(sqlite: Database.Database) {
       createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
       deletedAt INTEGER
     );
+    CREATE TABLE IF NOT EXISTS delivery_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      orderId TEXT NOT NULL UNIQUE,
+      tenantId TEXT NOT NULL,
+      sourceModule TEXT NOT NULL,
+      vendorId TEXT,
+      pickupAddress TEXT NOT NULL,
+      deliveryAddress TEXT NOT NULL,
+      itemsSummary TEXT NOT NULL,
+      weightKg REAL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      assignedProvider TEXT,
+      internalDeliveryId TEXT,
+      createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
+      updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
+    );
   `);
 }
 

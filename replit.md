@@ -77,9 +77,51 @@ pnpm build
 
 The Cloudflare Workers backend (production) is deployed separately via Wrangler and requires D1/KV/R2 setup.
 
+## P04 — Commerce ↔ Logistics Event Contracts
+
+### New package: `packages/core`
+- `@webwaka/core` (v1.2.0) — single source of truth for event type strings (`CommerceEvents`) and all shared payload types.
+- All event type strings in server code must reference `CommerceEvents` from this package only.
+
+### New database table: `delivery_requests`
+- Created automatically on server start via `runMigrations()` in `server/db.ts`.
+- Stores one record per incoming `order.ready_for_delivery` event. Unique on `orderId` for idempotency.
+
+### New server modules
+| File | Purpose |
+|---|---|
+| `server/delivery.db.ts` | DB query helpers for delivery_requests |
+| `server/events/commerceEventBus.ts` | Publishes events to COMMERCE_EVENTS queue |
+| `server/events/orderReadyForDelivery.ts` | Handles `order.ready_for_delivery` (TASK 2) |
+| `server/events/commerceEventRouter.ts` | Express router: `POST /api/events/commerce` |
+| `server/providers/index.ts` | Provider registry: GIG, Kwik, Sendbox, Errand Boy |
+| `server/webhooks/providers/gig.ts` | GIG Logistics webhook handler |
+| `server/webhooks/providers/kwik.ts` | Kwik Delivery webhook handler |
+| `server/webhooks/providers/sendbox.ts` | Sendbox webhook handler |
+| `server/webhooks/webhookRouter.ts` | Express router: `POST /api/webhooks/{gig,kwik,sendbox}` |
+| `server/routers/logistics.ts` | tRPC lifecycle API (TASK 5) |
+
+### New API endpoints
+- `POST /api/events/commerce` — receives inbound commerce events
+- `POST /api/webhooks/gig` — GIG Logistics status webhooks
+- `POST /api/webhooks/kwik` — Kwik Delivery status webhooks
+- `POST /api/webhooks/sendbox` — Sendbox status webhooks
+- `trpc.logistics.getRequest` — get delivery request by orderId
+- `trpc.logistics.assignProvider` — assign a specific provider
+- `trpc.logistics.cancelRequest` — cancel + publish FAILED event
+
+### New env vars (optional)
+- `COMMERCE_EVENTS_URL` — URL to HTTP-forward outbound events to the commerce system
+- `GIG_WEBHOOK_SECRET` — webhook secret for GIG Logistics signature validation
+- `KWIK_WEBHOOK_SECRET` — webhook secret for Kwik Delivery
+- `SENDBOX_WEBHOOK_SECRET` — webhook secret for Sendbox
+
 ## Key Features
 
 - Multi-tenant parcel tracking system
+- Commerce ↔ Logistics event contracts (P04)
+- Delivery provider registry with fee estimation (GIG, Kwik, Sendbox, Errand Boy)
+- Provider webhook handlers with canonical status mapping
 - Offline-first mutation queue (syncs when back online)
 - PWA with service worker and background sync
 - JWT-based authentication with tenant ID support

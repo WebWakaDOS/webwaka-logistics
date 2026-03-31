@@ -1,0 +1,86 @@
+/**
+ * GIG Logistics Webhook Handler [P04 — TASK 4]
+ * Maps GIG-specific status codes to canonical WebWaka statuses.
+ */
+
+import type { Request, Response } from "express";
+import type { CanonicalDeliveryStatus } from "@webwaka/core";
+import { CommerceEvents } from "@webwaka/core";
+import { createLogger } from "../../logger";
+import { getDeliveryRequestByOrderId, updateDeliveryRequestStatus } from "../../delivery.db";
+import { publishCommerceEvent } from "../../events/commerceEventBus";
+
+const logger = createLogger("GIGWebhook");
+
+// GIG status → canonical
+const GIG_STATUS_MAP: Record<string, CanonicalDeliveryStatus> = {
+  SHIPMENT_CREATED: "PENDING",
+  PICKED_UP: "PICKED_UP",
+  IN_TRANSIT: "IN_TRANSIT",
+  OUT_FOR_DELIVERY: "OUT_FOR_DELIVERY",
+  DELIVERED: "DELIVERED",
+  DELIVERY_FAILED: "FAILED",
+  RETURNED_TO_SENDER: "RETURNED",
+};
+
+function verifyGigSignature(req: Request): boolean {
+  const signature = req.headers["x-gig-signature"];
+  const secret = process.env.GIG_WEBHOOK_SECRET;
+  if (!secret) {
+    logger.warn("[GIG] GIG_WEBHOOK_SECRET not set — skipping signature verification");
+    return true;
+  }
+  return signature === secret;
+}
+
+export async function handleGigWebhook(req: Request, res: Response): Promise<void> {
+  if (!verifyGigSignature(req)) {
+    logger.warn("[GIG] Invalid webhook signature");
+    res.status(401).json({ error: "Invalid signature" });
+    return;
+  }
+
+  const body = req.body as Record<string, unknown>;
+  const orderId = body.orderId as string | undefined;
+  const tenantId = body.tenantId as string | undefined;
+  const gigStatus = body.status as string | undefined;
+  const trackingUrl = body.trackingUrl as string | undefined;
+  const estimatedDelivery = body.estimatedDelivery as string | undefined;
+
+  if (!orderId || !tenantId || !gigStatus) {
+    logger.warn("[GIG] Webhook missing required fields", { orderId, tenantId, gigStatus });
+    res.status(400).json({ error: "orderId, tenantId, and status are required" });
+    return;
+  }
+
+  const canonicalStatus = GIG_STATUS_MAP[gigStatus];
+  if (!canonicalStatus) {
+    logger.warn("[GIG] Unknown status code — no-op", { gigStatus });
+    res.status(200).json({ ok: true, note: "Unknown status — ignored" });
+    return;
+  }
+
+  const request = await getDeliveryRequestByOrderId(orderId);
+  if (!request) {
+    logger.warn("[GIG] Delivery request not found", { orderId });
+    res.status(404).json({ error: "Delivery request not found" });
+    return;
+  }
+
+  await updateDeliveryRequestStatus(orderId, tenantId, canonicalStatus, {
+    assignedProvider: "gig",
+  });
+
+  await publishCommerceEvent(CommerceEvents.DELIVERY_STATUS, {
+    orderId,
+    tenantId,
+    deliveryId: request.internalDeliveryId ?? orderId,
+    provider: "gig",
+    status: canonicalStatus,
+    ...(trackingUrl ? { trackingUrl } : {}),
+    ...(estimatedDelivery ? { estimatedDelivery } : {}),
+  });
+
+  logger.info("[GIG] Webhook processed", { orderId, canonicalStatus });
+  res.status(200).json({ ok: true });
+}

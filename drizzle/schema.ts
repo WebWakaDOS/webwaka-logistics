@@ -7,9 +7,9 @@ export const users = sqliteTable("users", {
   email: text("email"),
   loginMethod: text("loginMethod"),
   role: text("role").default("user").notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
-  lastSignedIn: integer("lastSignedIn", { mode: "timestamp" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  lastSignedIn: integer("lastSignedIn", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
 export type User = typeof users.$inferSelect;
@@ -53,8 +53,8 @@ export const parcels = sqliteTable("parcels", {
   estimatedDeliveryAt: integer("estimatedDeliveryAt", { mode: "timestamp" }),
   actualDeliveryAt: integer("actualDeliveryAt", { mode: "timestamp" }),
   clientId: text("clientId"),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
-  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   deletedAt: integer("deletedAt", { mode: "timestamp" }),
 });
 
@@ -71,7 +71,7 @@ export const parcelUpdates = sqliteTable("parcel_updates", {
   longitude: real("longitude"),
   notes: text("notes"),
   recordedById: integer("recordedById").notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
 });
 
 export type ParcelUpdate = typeof parcelUpdates.$inferSelect;
@@ -88,9 +88,48 @@ export const proofOfDelivery = sqliteTable("proof_of_delivery", {
   receivedByName: text("receivedByName").notNull(),
   receivedByRelation: text("receivedByRelation").default("Self").notNull(),
   capturedById: integer("capturedById").notNull(),
-  createdAt: integer("createdAt", { mode: "timestamp" }).notNull(),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   deletedAt: integer("deletedAt", { mode: "timestamp" }),
 });
 
 export type ProofOfDelivery = typeof proofOfDelivery.$inferSelect;
 export type InsertProofOfDelivery = typeof proofOfDelivery.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delivery Requests — P04 Commerce ↔ Logistics event contract
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const DELIVERY_REQUEST_STATUS = [
+  "PENDING",
+  "PICKING_PROVIDER",
+  "ASSIGNED",
+  "PICKED_UP",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+  "FAILED",
+  "RETURNED",
+  "CANCELLED",
+] as const;
+
+export type DeliveryRequestStatus = (typeof DELIVERY_REQUEST_STATUS)[number];
+
+export const deliveryRequests = sqliteTable("delivery_requests", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: text("orderId").notNull().unique(),
+  tenantId: text("tenantId").notNull(),
+  sourceModule: text("sourceModule").notNull(),
+  vendorId: text("vendorId"),
+  pickupAddress: text("pickupAddress").notNull(),
+  deliveryAddress: text("deliveryAddress").notNull(),
+  itemsSummary: text("itemsSummary").notNull(),
+  weightKg: real("weightKg"),
+  status: text("status").default("PENDING").notNull(),
+  assignedProvider: text("assignedProvider"),
+  internalDeliveryId: text("internalDeliveryId"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export type DeliveryRequest = typeof deliveryRequests.$inferSelect;
+export type InsertDeliveryRequest = typeof deliveryRequests.$inferInsert;

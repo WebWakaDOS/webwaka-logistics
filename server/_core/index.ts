@@ -7,6 +7,8 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { webhookRouter } from "../webhooks/webhookRouter";
+import { commerceEventRouter } from "../events/commerceEventRouter";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -35,6 +37,10 @@ async function startServer() {
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
+  // P04: Provider webhook endpoints
+  app.use("/api/webhooks", webhookRouter);
+  // P04: Inbound commerce event endpoint
+  app.use("/api/events/commerce", commerceEventRouter);
   // tRPC API
   app.use(
     "/api/trpc",

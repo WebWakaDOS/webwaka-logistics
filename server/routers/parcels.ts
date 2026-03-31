@@ -232,8 +232,8 @@ export const parcelsRouter = router({
         parcelId: input.parcelId,
         status: input.status,
         location: input.location,
-        latitude: input.latitude,
-        longitude: input.longitude,
+        latitude: input.latitude !== undefined ? parseFloat(input.latitude) : null,
+        longitude: input.longitude !== undefined ? parseFloat(input.longitude) : null,
         notes: input.notes,
         recordedById: ctx.user.id,
       });
