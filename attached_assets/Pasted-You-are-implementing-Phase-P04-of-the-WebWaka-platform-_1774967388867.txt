@@ -1,0 +1,97 @@
+You are implementing Phase P04 of the WebWaka platform implementation plan in the webwaka-logistics repository.
+
+This phase defines and implements the event contracts between the commerce system and the logistics system. The commerce repo will publish events; the logistics repo must handle them and publish responses. Both sides must use identical event type strings from @webwaka/core.
+
+This phase is ENTIRELY in the webwaka-logistics repository. Do not modify webwaka-commerce.
+
+Read the existing structure of the webwaka-logistics codebase fully before starting.
+
+## Governance
+- Event type strings must ONLY come from CommerceEvents in @webwaka/core (never hardcoded)
+- All handlers must be idempotent (safe to run more than once with the same event)
+- All events must carry tenantId and be processed in tenant-isolated context
+- The logistics repo must NOT access commerce D1 tables directly — only via events
+- Payloads are contracts: changing them is a breaking change; version them carefully
+
+## Tasks:
+
+### TASK 1 — Install @webwaka/core
+Add @webwaka/core version 1.2.0 as a dependency in the logistics repo package.json.
+Import and use CommerceEvents for all event type string references.
+
+### TASK 2 — Inbound Event Handler: order.ready_for_delivery
+Register a handler for CommerceEvents.ORDER_READY_DELIVERY.
+
+Expected payload schema (validate all fields before processing):
+{
+orderId: string — the commerce order ID
+tenantId: string — required for tenant isolation
+sourceModule: 'single-vendor' | 'multi-vendor'
+vendorId?: string — present for multi-vendor sub-orders
+pickupAddress: {
+name: string, phone: string, street: string, city: string, state: string, lga: string
+}
+deliveryAddress: {
+name: string, phone: string, street: string, city: string, state: string, lga: string
+}
+itemsSummary: string
+weightKg?: number
+preferredProviders?: string[]
+}
+
+On receiving this event:
+1. Validate all required fields. If invalid: log and ack without retry.
+2. Check for duplicate: if a delivery_request with this orderId already exists, ack without processing.
+3. INSERT into logistics delivery_requests table (orderId, tenantId, sourceModule, vendorId, pickupAddress JSON, deliveryAddress JSON, itemsSummary, weightKg, status: 'PENDING', createdAt).
+4. Query active delivery providers for the route (city-to-city or local).
+5. Compute fee estimates for each provider.
+6. Publish CommerceEvents.DELIVERY_QUOTE event back to the COMMERCE_EVENTS queue.
+
+### TASK 3 — Outbound Event: delivery.quote
+Publish CommerceEvents.DELIVERY_QUOTE with this payload:
+{
+orderId: string
+tenantId: string
+quotes: Array<{
+provider: string — e.g. 'gig', 'kwik', 'sendbox', 'errand_boy'
+providerName: string — human readable e.g. 'GIG Logistics'
+etaHours: number — estimated hours to delivery
+feeKobo: number — delivery fee in kobo
+trackingSupported: boolean
+}>
+}
+This event must be published within 10 seconds of receiving order.ready_for_delivery.
+If no providers are available, publish with an empty quotes array and include an 'unavailable' reason field.
+
+### TASK 4 — Provider Webhook Handlers
+Create webhook endpoints for at minimum: GIG Logistics, Kwik Delivery, Sendbox.
+
+For each provider webhook received:
+1. Validate the webhook signature/secret from the provider.
+2. Map provider-specific status codes to canonical statuses:
+Canonical statuses: PENDING | PICKED_UP | IN_TRANSIT | OUT_FOR_DELIVERY | DELIVERED | FAILED | RETURNED
+3. UPDATE delivery_requests SET status = ?, updatedAt = ? WHERE orderId = ? AND tenantId = ?
+4. Publish CommerceEvents.DELIVERY_STATUS event with payload:
+{
+orderId: string
+tenantId: string
+deliveryId: string — internal logistics ID
+provider: string
+status: canonical status string
+trackingUrl?: string
+estimatedDelivery?: string
+notes?: string
+}
+
+### TASK 5 — Delivery Request Lifecycle API
+Expose internal API endpoints for the logistics team's own use:
+- GET /logistics/requests/:orderId — get delivery request status
+- PATCH /logistics/requests/:orderId/assign — assign to a specific provider
+- PATCH /logistics/requests/:orderId/cancel — cancel delivery (triggers FAILED event)
+
+## Verification
+1. TypeScript type-check with no errors
+2. Unit test: publish a mock order.ready_for_delivery event and verify delivery_request is created and delivery.quote is published
+3. Unit test: receive a mock GIG webhook and verify delivery.status_changed is published with correct canonical status mapping
+4. Integration test: end-to-end from order event to quote event within 10 seconds
+```
