@@ -21,7 +21,8 @@ export type ParcelEvent =
   | "parcel.out_for_delivery"
   | "parcel.delivered"
   | "parcel.failed"
-  | "parcel.returned";
+  | "parcel.returned"
+  | "parcel.trip_assigned";
 
 export interface EventPayload {
   event: ParcelEvent;

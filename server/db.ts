@@ -63,6 +63,9 @@ function runMigrations(sqlite: Database.Database) {
       estimatedDeliveryAt INTEGER,
       actualDeliveryAt INTEGER,
       clientId TEXT,
+      tripId TEXT,
+      waybillId TEXT,
+      seatAssignmentStatus TEXT NOT NULL DEFAULT 'none',
       createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
       updatedAt INTEGER NOT NULL DEFAULT (unixepoch()),
       deletedAt INTEGER
@@ -110,6 +113,20 @@ function runMigrations(sqlite: Database.Database) {
       updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
     );
   `);
+
+  // P12: Add transport integration columns to existing parcels table (idempotent)
+  const p12Columns = [
+    `ALTER TABLE parcels ADD COLUMN tripId TEXT`,
+    `ALTER TABLE parcels ADD COLUMN waybillId TEXT`,
+    `ALTER TABLE parcels ADD COLUMN seatAssignmentStatus TEXT NOT NULL DEFAULT 'none'`,
+  ];
+  for (const stmt of p12Columns) {
+    try {
+      sqlite.exec(stmt);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 export { getDb };

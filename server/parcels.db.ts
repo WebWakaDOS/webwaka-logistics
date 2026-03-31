@@ -261,3 +261,27 @@ export async function getProofOfDelivery(tenantId: string, parcelId: number) {
 
   return result[0] ?? null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// P12: Transport Integration Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Links a parcel to a transport trip and sets seatAssignmentStatus to "pending".
+ * Called before publishing parcel.seats_required to the transport service.
+ */
+export async function linkParcelToTrip(
+  tenantId: string,
+  parcelId: number,
+  tripId: string,
+): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  logger.info("Linking parcel to transport trip", { tenantId, parcelId, tripId });
+
+  db.update(parcels)
+    .set({ tripId, seatAssignmentStatus: "pending", updatedAt: new Date() })
+    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)))
+    .run();
+}

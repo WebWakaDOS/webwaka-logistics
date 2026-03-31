@@ -12,6 +12,7 @@ import { storagePut } from "../storage";
 import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
 import { createLogger } from "../logger";
 import { publishEvent } from "../eventBus";
+import { publishSeatsRequired } from "../transport-events";
 import {
   addParcelUpdate,
   createParcel,
@@ -23,6 +24,7 @@ import {
   getParcelUpdates,
   getParcelUpdatesPublic,
   getProofOfDelivery,
+  linkParcelToTrip,
   listParcels,
   searchParcels,
   softDeleteParcel,
@@ -409,5 +411,70 @@ export const parcelsRouter = router({
     .mutation(async ({ input }) => {
       await softDeleteParcel(input.tenantId, input.parcelId);
       return { success: true };
+    }),
+
+  /**
+   * P12-T2: Confirm a parcel for shipment on a specific transport trip.
+   * Publishes parcel.seats_required to the transport service and blocks cargo seats.
+   * Operators call this when assigning a parcel to a specific trip.
+   */
+  confirmForTrip: protectedProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        parcelId: z.number().int().positive(),
+        tripId: z.string().min(1).max(128),
+      }),
+    )
+    .mutation(async ({ input, ctx }) => {
+      const parcel = await getParcelById(input.tenantId, input.parcelId);
+      if (!parcel) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+      }
+
+      // Link parcel to the transport trip
+      await linkParcelToTrip(input.tenantId, input.parcelId, input.tripId);
+
+      logger.info("Parcel linked to transport trip — requesting seat assignment", {
+        parcelId: input.parcelId,
+        tripId: input.tripId,
+        requestedBy: ctx.user.openId,
+      });
+
+      // Publish parcel.seats_required to the transport service
+      const result = await publishSeatsRequired(input.parcelId, input.tenantId);
+
+      await publishEvent({
+        event: "parcel.trip_assigned",
+        tenantId: input.tenantId,
+        parcelId: input.parcelId,
+        trackingNumber: parcel.trackingNumber,
+        timestamp: new Date().toISOString(),
+        data: { tripId: input.tripId, seatResult: result.outcome },
+      });
+
+      if (result.outcome === "unavailable") {
+        return {
+          success: true,
+          seatAssignment: "unavailable" as const,
+          message: "Cargo space full on this trip — please reschedule to a different trip",
+          available: result.available,
+          requested: result.requested,
+        };
+      }
+
+      if (result.outcome === "pending_retry") {
+        return {
+          success: true,
+          seatAssignment: "pending" as const,
+          message: "Seat assignment is pending — will retry on next sync",
+        };
+      }
+
+      return {
+        success: true,
+        seatAssignment: "confirmed" as const,
+        blockedSeatIds: result.blockedSeatIds,
+      };
     }),
 });

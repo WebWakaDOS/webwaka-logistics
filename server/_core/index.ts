@@ -9,6 +9,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { webhookRouter } from "../webhooks/webhookRouter";
 import { commerceEventRouter } from "../events/commerceEventRouter";
+import { transportIntegrationRouter } from "../transport-integration";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -41,6 +42,8 @@ async function startServer() {
   app.use("/api/webhooks", webhookRouter);
   // P04: Inbound commerce event endpoint
   app.use("/api/events/commerce", commerceEventRouter);
+  // P12: Transport ↔ Logistics inter-service event endpoint
+  app.use("/internal", transportIntegrationRouter);
   // tRPC API
   app.use(
     "/api/trpc",

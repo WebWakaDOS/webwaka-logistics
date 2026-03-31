@@ -29,6 +29,15 @@ export type ParcelStatus = (typeof PARCEL_STATUS)[number];
 
 export const PARCEL_PRIORITY = ["STANDARD", "EXPRESS", "SAME_DAY"] as const;
 
+export const SEAT_ASSIGNMENT_STATUS = [
+  "none",
+  "pending",
+  "confirmed",
+  "unavailable",
+] as const;
+
+export type SeatAssignmentStatus = (typeof SEAT_ASSIGNMENT_STATUS)[number];
+
 export const parcels = sqliteTable("parcels", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   tenantId: text("tenantId").notNull(),
@@ -53,6 +62,12 @@ export const parcels = sqliteTable("parcels", {
   estimatedDeliveryAt: integer("estimatedDeliveryAt", { mode: "timestamp" }),
   actualDeliveryAt: integer("actualDeliveryAt", { mode: "timestamp" }),
   clientId: text("clientId"),
+  /** P12: Transport integration — trip this parcel is assigned to */
+  tripId: text("tripId"),
+  /** P12: Transport integration — waybill ID from the transport repo */
+  waybillId: text("waybillId"),
+  /** P12: Seat blocking status for transport cargo */
+  seatAssignmentStatus: text("seatAssignmentStatus").default("none").notNull(),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   deletedAt: integer("deletedAt", { mode: "timestamp" }),

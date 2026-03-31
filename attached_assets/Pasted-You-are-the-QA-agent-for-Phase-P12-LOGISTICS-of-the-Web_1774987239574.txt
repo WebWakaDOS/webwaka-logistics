@@ -1,0 +1,59 @@
+You are the QA agent for Phase P12-LOGISTICS of the WebWaka platform.
+Target repo: webwaka-logistics (and a brief cross-check of webwaka-transport)
+
+Deeply verify P12-LOGISTICS (Transport-Logistics Integration). Fix every issue. Do not declare verified until all checks pass.
+
+=== VERIFICATION CHECKLIST ===
+
+--- P12-T1: Transport Event Receiver ---
+1. Confirm POST /internal/transport-events exists in the logistics repo.
+2. Confirm it checks the Authorization header: Authorization: Bearer {INTER_SERVICE_SECRET}. Return 401 if absent or wrong. Confirm the secret is read from env.INTER_SERVICE_SECRET (not hardcoded).
+3. Confirm it reads X-Webwaka-Event-Type to determine the handler.
+4. Confirm parcel.waybill_created handler: parses payload and creates a parcel record in the logistics DB.
+5. Confirm trip.state_changed handler:
+- in_transit: marks linked parcels as in_transit
+- completed: marks linked parcels as delivered with delivered_at timestamp
+6. Confirm unrecognized event types return 200 (not 400 or 500) — the receiver must be tolerant of unknown event types.
+7. Check: what if the payload JSON is malformed? The endpoint must return 200 (or at worst 400 for truly unprocessable content) — it must never crash with a 500 that causes the transport repo's drainEventBus to mark the event as dead.
+
+--- P12-T2: Parcel Seat Requirement Events ---
+1. Confirm the logistics parcel confirmation flow calls POST {TRANSPORT_BASE_URL}/api/internal/transport-events with event type parcel.seats_required.
+2. Confirm the payload includes: trip_id, seats_needed (computed from weight), parcel_id, weight_kg, declared_value_kobo.
+3. Confirm the Authorization header is set: Bearer {INTER_SERVICE_SECRET}.
+4. Confirm the response is handled:
+- seats_confirmed: true → parcel is fully confirmed
+- seats_unavailable: true → parcel is flagged for rescheduling (not silently lost)
+- Network error → parcel marked pending_seat_assignment with a retry flag
+5. Confirm TRANSPORT_BASE_URL is read from env (not hardcoded). Confirm it is not a secret (public URL).
+
+--- P12-T3: Transport Repo — Internal Events Endpoint (cross-repo check) ---
+Switch to the webwaka-transport repo for this section.
+
+1. Confirm POST /api/internal/transport-events exists in webwaka-transport.
+2. Confirm it checks Authorization: Bearer {INTER_SERVICE_SECRET}.
+3. Confirm the parcel.seats_required handler:
+a. Queries available seats of any class on the trip
+b. Blocks exactly seats_needed seats by updating their status to 'blocked' with blocked_reason='parcel_cargo'
+c. Returns 200 { seats_confirmed: true, blocked_seat_ids: [...] } when enough seats found
+d. Returns 200 { seats_unavailable: true, available: N, requested: seats_needed } when insufficient
+4. Confirm the blocked seats are not available for passenger booking (status='blocked' is excluded from the availability query).
+5. Check: what if trip_id does not exist? Should return 200 { seats_unavailable: true } — not 404 (caller must handle this gracefully).
+
+--- Integration Test (End-to-End) ---
+6. If both repos are deployed (or can be run locally with inter-service communication), perform an end-to-end test:
+a. Create a transport trip with 20 seats in webwaka-transport.
+b. Trigger a parcel.seats_required event from webwaka-logistics for 3 seats on that trip.
+c. Confirm in webwaka-transport: 3 seats are now 'blocked'.
+d. Confirm webwaka-logistics receives seats_confirmed: true.
+e. Transition the trip to 'completed' in webwaka-transport (triggering trip.state_changed event to logistics).
+f. Confirm in webwaka-logistics: the parcel linked to that trip is marked 'delivered'.
+7. If live inter-service testing is not possible: confirm that the mocked integration (calling the actual API code paths locally) produces the expected data transformations.
+
+--- FINAL CHECKS ---
+1. Run tsc --noEmit in webwaka-logistics — zero errors.
+2. Run tsc --noEmit in webwaka-transport — zero errors.
+3. Grep for INTER_SERVICE_SECRET in both repos: it must only appear as env.INTER_SERVICE_SECRET and never as a hardcoded string.
+4. Confirm both repos have INTER_SERVICE_SECRET documented in their .env.example files.
+
+Report every issue found and every fix applied.
+```
