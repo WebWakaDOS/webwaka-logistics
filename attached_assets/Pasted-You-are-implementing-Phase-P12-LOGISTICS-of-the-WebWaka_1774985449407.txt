@@ -1,0 +1,71 @@
+You are implementing Phase P12-LOGISTICS of the WebWaka platform.
+Target repo: webwaka-logistics
+
+This phase wires the transport-logistics integration. You are building on the logistics side only. Do not modify the webwaka-transport repo. Read webwaka-implementation-plan.md (available in the webwaka-transport repo) for full context.
+
+The integration protocol:
+- Transport → Logistics: transport repo's drainEventBus() posts parcel.* events to the logistics repo endpoint
+- Logistics → Transport: logistics repo posts parcel.seats_required events to the transport repo endpoint
+- Authentication: both directions use Authorization: Bearer {INTER_SERVICE_SECRET} header (shared secret, stored as a Worker secret in both repos)
+
+=== TASK P12-T1: Transport Event Receiver Endpoint ===
+File: src/api/transport-integration.ts (create new file)
+
+Create a webhook handler in the logistics repo: POST /internal/transport-events
+
+1. Verify the Authorization header: Authorization: Bearer {env.INTER_SERVICE_SECRET}. Return 401 if missing or wrong.
+2. Read the X-Webwaka-Event-Type header to determine event type.
+3. Handle parcel.waybill_created:
+- Parse payload: { trip_id, waybill_id, sender, recipient, description, weight_kg, declared_value_kobo, fees_kobo }
+- Create a parcel record in the logistics DB linked to the trip_id
+- Return 200 { received: true }
+4. Handle trip.state_changed:
+- Parse payload: { trip_id, new_state }
+- If new_state = 'in_transit': UPDATE parcels SET status = 'in_transit' WHERE trip_id = ? AND status = 'pending'
+- If new_state = 'completed': UPDATE parcels SET status = 'delivered', delivered_at = ? WHERE trip_id = ? AND status = 'in_transit'
+- Return 200 { received: true }
+5. Default: return 200 { received: true, note: 'event type not handled' } — never return non-200 for unrecognized events
+
+Register this route in the logistics app's Hono router.
+
+=== TASK P12-T2: Publish Parcel Seat Requirement Events ===
+File: logistics parcel confirmation flow
+
+When a parcel is confirmed for shipment on a specific transport trip:
+1. Read the trip_id from the parcel's shipment record
+2. Call the transport repo: POST {env.TRANSPORT_BASE_URL}/api/internal/transport-events with:
+- Headers: Authorization: Bearer {env.INTER_SERVICE_SECRET}, Content-Type: application/json, X-Webwaka-Event-Type: parcel.seats_required
+- Body: { trip_id, seats_needed: Math.ceil(parcel.weight_kg / 30), parcel_id: parcel.id, weight_kg: parcel.weight_kg, declared_value_kobo: parcel.declared_value_kobo }
+3. Handle the response:
+- 200 with { seats_confirmed: true }: parcel is confirmed, seats are blocked on the bus
+- 200 with { seats_unavailable: true }: notify the logistics operator that cargo space is full on this trip — they must reschedule
+- Non-200 or network error: log, mark parcel as pending_seat_assignment, retry on next sync
+
+Store TRANSPORT_BASE_URL as a Worker environment variable (not a secret — it is the public API URL).
+
+=== TASK P12-T3: Transport Repo — Receive Seat Requirement Events ===
+Note: This task modifies webwaka-transport. Include these changes in the P12 work but apply them to the transport repo.
+
+File (webwaka-transport): src/api/ — add internal events endpoint
+File (webwaka-transport): src/lib/sweepers.ts — add parcel.seats_required handler
+
+1. Add POST /api/internal/transport-events to the transport repo (protected by INTER_SERVICE_SECRET):
+- Verifies Authorization: Bearer {env.INTER_SERVICE_SECRET}
+- Routes to appropriate handler by X-Webwaka-Event-Type
+
+2. Handle parcel.seats_required:
+- Parse payload: { trip_id, seats_needed, parcel_id, weight_kg }
+- Find `seats_needed` available seats on the trip: SELECT id FROM seats WHERE trip_id = ? AND status = 'available' ORDER BY seat_number ASC LIMIT ?
+- If enough seats available: UPDATE seats SET status='blocked', blocked_reason='parcel_cargo', blocked_by=parcel_id WHERE id IN (found_ids). Return 200 { seats_confirmed: true, blocked_seat_ids: [...] }
+- If not enough: Return 200 { seats_unavailable: true, available: N, requested: seats_needed }
+
+=== ENVIRONMENT VARIABLES ===
+Both repos need these Worker secrets/vars:
+- webwaka-transport: INTER_SERVICE_SECRET (shared secret), and the /api/internal/transport-events endpoint
+- webwaka-logistics: INTER_SERVICE_SECRET (same shared secret), TRANSPORT_BASE_URL (webwaka-transport's deployed URL)
+
+Set these via wrangler secret put INTER_SERVICE_SECRET in each repo.
+
+=== DONE ===
+Deploy both repos. Test the integration end-to-end: create a parcel in logistics linked to a transport trip ID. Verify the transport trip's seats are blocked. Complete the transport trip → verify the parcel is marked delivered in logistics.
+```
