@@ -25,6 +25,8 @@ export const PARCEL_STATUS = [
   "RETURNED",
 ] as const;
 
+export type ParcelStatus = (typeof PARCEL_STATUS)[number];
+
 export const PARCEL_PRIORITY = ["STANDARD", "EXPRESS", "SAME_DAY"] as const;
 
 export const parcels = sqliteTable("parcels", {

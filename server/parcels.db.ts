@@ -40,13 +40,13 @@ export function generateTrackingNumber(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function createParcel(data: InsertParcel) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   logger.info("Creating parcel", { tenantId: data.tenantId, trackingNumber: data.trackingNumber });
-  await db.insert(parcels).values(data);
+  db.insert(parcels).values(data).run();
 
-  const result = await db
+  const result = db
     .select()
     .from(parcels)
     .where(
@@ -55,13 +55,14 @@ export async function createParcel(data: InsertParcel) {
         eq(parcels.trackingNumber, data.trackingNumber!),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0];
 }
 
 export async function listParcels(tenantId: string, limit = 50, offset = 0) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   return db
@@ -70,14 +71,15 @@ export async function listParcels(tenantId: string, limit = 50, offset = 0) {
     .where(and(eq(parcels.tenantId, tenantId), isNull(parcels.deletedAt)))
     .orderBy(desc(parcels.createdAt))
     .limit(limit)
-    .offset(offset);
+    .offset(offset)
+    .all();
 }
 
 export async function getParcelByTracking(tenantId: string, trackingNumber: string) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const result = await db
+  const result = db
     .select()
     .from(parcels)
     .where(
@@ -87,34 +89,37 @@ export async function getParcelByTracking(tenantId: string, trackingNumber: stri
         isNull(parcels.deletedAt),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0] ?? null;
 }
 
 export async function getParcelById(tenantId: string, id: number) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const result = await db
+  const result = db
     .select()
     .from(parcels)
     .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, id), isNull(parcels.deletedAt)))
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0] ?? null;
 }
 
 /** Public tracking — no tenantId required, for customer-facing tracking page */
 export async function getParcelByTrackingPublic(trackingNumber: string) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const result = await db
+  const result = db
     .select()
     .from(parcels)
     .where(and(eq(parcels.trackingNumber, trackingNumber), isNull(parcels.deletedAt)))
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0] ?? null;
 }
@@ -125,30 +130,32 @@ export async function updateParcelStatus(
   status: ParcelStatus,
   extra?: Partial<Pick<InsertParcel, "assignedAgentId" | "estimatedDeliveryAt" | "actualDeliveryAt">>,
 ) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   logger.info("Updating parcel status", { tenantId, parcelId, status });
 
-  await db
+  db
     .update(parcels)
-    .set({ status, ...extra })
-    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)));
+    .set({ status, updatedAt: new Date(), ...extra })
+    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)))
+    .run();
 }
 
 export async function softDeleteParcel(tenantId: string, parcelId: number) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   logger.info("Soft-deleting parcel", { tenantId, parcelId });
-  await db
+  db
     .update(parcels)
     .set({ deletedAt: new Date() })
-    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)));
+    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)))
+    .run();
 }
 
 export async function searchParcels(tenantId: string, query: string, limit = 20) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   return db
@@ -161,7 +168,8 @@ export async function searchParcels(tenantId: string, query: string, limit = 20)
         like(parcels.trackingNumber, `%${query}%`),
       ),
     )
-    .limit(limit);
+    .limit(limit)
+    .all();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,7 +177,7 @@ export async function searchParcels(tenantId: string, query: string, limit = 20)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function addParcelUpdate(data: InsertParcelUpdate) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   logger.info("Adding parcel update", {
@@ -178,30 +186,32 @@ export async function addParcelUpdate(data: InsertParcelUpdate) {
     status: data.status,
   });
 
-  await db.insert(parcelUpdates).values(data);
+  db.insert(parcelUpdates).values(data).run();
 }
 
 export async function getParcelUpdates(tenantId: string, parcelId: number) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   return db
     .select()
     .from(parcelUpdates)
     .where(and(eq(parcelUpdates.tenantId, tenantId), eq(parcelUpdates.parcelId, parcelId)))
-    .orderBy(desc(parcelUpdates.createdAt));
+    .orderBy(desc(parcelUpdates.createdAt))
+    .all();
 }
 
 /** Public — for customer tracking page */
 export async function getParcelUpdatesPublic(parcelId: number) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   return db
     .select()
     .from(parcelUpdates)
     .where(eq(parcelUpdates.parcelId, parcelId))
-    .orderBy(desc(parcelUpdates.createdAt));
+    .orderBy(desc(parcelUpdates.createdAt))
+    .all();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -209,13 +219,13 @@ export async function getParcelUpdatesPublic(parcelId: number) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function createProofOfDelivery(data: InsertProofOfDelivery) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
   logger.info("Creating proof of delivery", { tenantId: data.tenantId, parcelId: data.parcelId });
-  await db.insert(proofOfDelivery).values(data);
+  db.insert(proofOfDelivery).values(data).run();
 
-  const result = await db
+  const result = db
     .select()
     .from(proofOfDelivery)
     .where(
@@ -226,16 +236,17 @@ export async function createProofOfDelivery(data: InsertProofOfDelivery) {
       ),
     )
     .orderBy(desc(proofOfDelivery.createdAt))
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0];
 }
 
 export async function getProofOfDelivery(tenantId: string, parcelId: number) {
-  const db = await getDb();
+  const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const result = await db
+  const result = db
     .select()
     .from(proofOfDelivery)
     .where(
@@ -245,7 +256,8 @@ export async function getProofOfDelivery(tenantId: string, parcelId: number) {
         isNull(proofOfDelivery.deletedAt),
       ),
     )
-    .limit(1);
+    .limit(1)
+    .all();
 
   return result[0] ?? null;
 }
