@@ -4,7 +4,7 @@
  */
 
 import { z } from "zod";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, adminProcedure, router } from "../_core/trpc";
 import { TRPCError } from "@trpc/server";
 import { CommerceEvents } from "@webwaka/core";
 import {
@@ -38,7 +38,7 @@ export const logisticsRouter = router({
    * PATCH /logistics/requests/:orderId/assign
    * Assigns the delivery request to a specific provider.
    */
-  assignProvider: protectedProcedure
+  assignProvider: adminProcedure
     .input(
       z.object({
         orderId: z.string().min(1),

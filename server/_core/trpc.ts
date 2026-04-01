@@ -43,3 +43,26 @@ export const adminProcedure = t.procedure.use(
     });
   }),
 );
+
+/**
+ * agentProcedure — admin or agent role.
+ * Use for: dispatch, status updates, proof-of-delivery submission.
+ * Added: 2026-04-01 — Security hardening (RBAC remediation)
+ * Blueprint Reference: Part 9.3 (Platform Conventions — RBAC)
+ */
+export const agentProcedure = t.procedure.use(
+  t.middleware(async opts => {
+    const { ctx, next } = opts;
+    if (!ctx.user) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: UNAUTHED_ERR_MSG });
+    }
+    const allowedRoles = ['admin', 'agent'];
+    if (!allowedRoles.includes(ctx.user.role)) {
+      throw new TRPCError({
+        code: "FORBIDDEN",
+        message: `Role '${ctx.user.role}' is not permitted for this operation. Required: admin or agent.`,
+      });
+    }
+    return next({ ctx: { ...ctx, user: ctx.user } });
+  }),
+);

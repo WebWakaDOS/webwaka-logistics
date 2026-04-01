@@ -9,7 +9,7 @@ import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { PARCEL_PRIORITY, PARCEL_STATUS } from "../../drizzle/schema";
 import { storagePut } from "../storage";
-import { publicProcedure, protectedProcedure, router } from "../_core/trpc";
+import { publicProcedure, protectedProcedure, agentProcedure, adminProcedure, router } from "../_core/trpc";
 import { createLogger } from "../logger";
 import { publishEvent } from "../eventBus";
 import { publishSeatsRequired } from "../transport-events";
@@ -274,7 +274,7 @@ export const parcelsRouter = router({
   /**
    * Dispatch a parcel — assign an agent and move to IN_TRANSIT. [Part 10.4]
    */
-  dispatch: protectedProcedure
+  dispatch: agentProcedure
     .input(
       z.object({
         tenantId: z.string().min(1).max(64),
@@ -322,7 +322,7 @@ export const parcelsRouter = router({
    * Submit proof of delivery with optional photo and signature. [Part 10.4]
    * Images stored in S3/R2 via platform storage helpers.
    */
-  submitPOD: protectedProcedure
+  submitPOD: agentProcedure
     .input(podInput)
     .mutation(async ({ ctx, input }) => {
       const parcel = await getParcelById(input.tenantId, input.parcelId);
@@ -406,7 +406,7 @@ export const parcelsRouter = router({
   /**
    * Soft-delete a parcel. [Part 9.2] — never hard-delete.
    */
-  delete: protectedProcedure
+  delete: adminProcedure
     .input(z.object({ tenantId: z.string().min(1).max(64), parcelId: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       await softDeleteParcel(input.tenantId, input.parcelId);
