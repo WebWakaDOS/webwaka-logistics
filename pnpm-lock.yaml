@@ -116,8 +116,8 @@ importers:
         specifier: ^11.6.0
         version: 11.6.0(typescript@5.9.3)
       '@webwaka/core':
-        specifier: file:./packages/core
-        version: link:packages/core
+        specifier: github:WebWakaDOS/webwaka-core#main
+        version: https://codeload.github.com/WebWakaDOS/webwaka-core/tar.gz/a2620d0318358cccddb0dbe31060feb0f4931570(hono@4.12.9)
       axios:
         specifier: ^1.12.0
         version: 1.12.2
@@ -2870,6 +2870,12 @@ packages:
 
   '@vitest/utils@2.1.9':
     resolution: {integrity: sha512-v0psaMSkNJ3A2NMrUEHFRzJtDPFn+/VWZ5WxImB21T9fjucJRmS7xCS3ppEnARb9y11OAzaD+P2Ps+b+BGX5iQ==}
+
+  '@webwaka/core@https://codeload.github.com/WebWakaDOS/webwaka-core/tar.gz/a2620d0318358cccddb0dbe31060feb0f4931570':
+    resolution: {tarball: https://codeload.github.com/WebWakaDOS/webwaka-core/tar.gz/a2620d0318358cccddb0dbe31060feb0f4931570}
+    version: 1.3.0
+    peerDependencies:
+      hono: '>=4.0.0'
 
   accepts@1.3.8:
     resolution: {integrity: sha512-PYAthTa2m2VKxuvSD3DPC/Gy+U+sOA1LAuT8mkmRuvw+NACSaeXEQ+NHcVF7rONl6qcaxV3Uuemwawk+7+SJLw==}
@@ -7805,6 +7811,10 @@ snapshots:
       '@vitest/pretty-format': 2.1.9
       loupe: 3.2.1
       tinyrainbow: 1.2.0
+
+  '@webwaka/core@https://codeload.github.com/WebWakaDOS/webwaka-core/tar.gz/a2620d0318358cccddb0dbe31060feb0f4931570(hono@4.12.9)':
+    dependencies:
+      hono: 4.12.9
 
   accepts@1.3.8:
     dependencies:
