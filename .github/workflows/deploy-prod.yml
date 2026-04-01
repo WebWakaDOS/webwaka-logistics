@@ -76,7 +76,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build PWA (Vite)
-        run: pnpm run build:ui
+        run: pnpm run build
         env:
           VITE_API_BASE: https://webwaka-logistics-api-prod.webwaka.workers.dev
           VITE_TENANT_ID: tnt_demo
