@@ -22,3 +22,29 @@ id = "ed98b167646d4469a4f03a2c9ab95781"
 [[r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-logistics-storage"
+
+# ============================================================
+# Production environment
+# ============================================================
+[env.production]
+name = "webwaka-logistics-api-prod"
+
+[env.production.vars]
+ENVIRONMENT = "production"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "webwaka-logistics-db"
+database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
+
+[[env.production.kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "ef463888d10e487ba4fe3563f7f71964"
+
+[[env.production.kv_namespaces]]
+binding = "EVENTS"
+id = "ed98b167646d4469a4f03a2c9ab95781"
+
+[[env.production.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "webwaka-logistics-storage"
