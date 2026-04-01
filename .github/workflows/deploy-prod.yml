@@ -46,12 +46,6 @@ jobs:
           cache: 'pnpm'
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - name: Apply D1 Migrations (Production)
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: d1 execute webwaka-logistics-db-prod --env production --file migrations/001_commerce_schema.sql --remote
       - name: Deploy Workers to Production
         uses: cloudflare/wrangler-action@v3
         with:
