@@ -9,15 +9,15 @@ ENVIRONMENT = "production"
 [[d1_databases]]
 binding = "DB"
 database_name = "webwaka-logistics-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "NEEDS_D1_UPGRADE"
 
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
-id = "00000000000000000000000000000000"
+id = "ef463888d10e487ba4fe3563f7f71964"
 
 [[kv_namespaces]]
 binding = "EVENTS"
-id = "00000000000000000000000000000000"
+id = "2fc767bf19f848119d347aa90ca23fe4"
 
 [[r2_buckets]]
 binding = "STORAGE"
