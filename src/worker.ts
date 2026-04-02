@@ -760,12 +760,14 @@ app.patch('/api/delivery-requests/:orderId/cancel', async (c) => {
 // ============================================================
 // Commerce Event Inbound (P04)
 // POST /api/events/commerce
+// Consumes the unified WebWakaEvent<T> schema (event, tenantId, payload, timestamp)
 // ============================================================
 app.post('/api/events/commerce', async (c) => {
   let body: Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json({ success: false, error: 'Invalid JSON' }, 400); }
 
-  const eventType = body.type as string | undefined;
+  // Unified WebWakaEvent<T> schema: read `event` field (not legacy `type`)
+  const eventType = (body.event ?? body.type) as string | undefined;
   const payload = body.payload as Record<string, unknown> | undefined;
 
   if (!eventType) return c.json({ success: false, error: 'Event type is required' }, 400);
