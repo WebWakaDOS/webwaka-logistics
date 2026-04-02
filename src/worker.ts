@@ -264,15 +264,40 @@ function getProviderQuotes(
 
 // ============================================================
 // Event Publisher (KV-backed outbox)
+// Unified WebWakaEvent schema: event, tenantId, payload, timestamp
+// Ref: EVENT_BUS_SCHEMA.md in webwaka-platform-docs
 // ============================================================
-async function publishEvent(env: Env, type: string, payload: unknown): Promise<void> {
-  const event = { type, payload, publishedAt: new Date().toISOString() };
+
+/**
+ * Unified WebWaka Platform Event Bus Schema (Governance-Mandated).
+ * Strictly conforms to the standard WebWakaEvent<T> shape:
+ *   event (string), tenantId (string), payload (T), timestamp (number)
+ *
+ * Legacy fields (publishedAt, type) have been replaced.
+ * tenantId is extracted from the payload and hoisted to the top level.
+ */
+interface WebWakaEvent {
+  event: string;
+  tenantId: string;
+  payload: Record<string, unknown>;
+  timestamp: number;
+}
+
+async function publishEvent(env: Env, eventType: string, payload: Record<string, unknown>): Promise<void> {
+  // Extract tenantId from payload (required by unified schema)
+  const tenantId = (payload.tenantId as string | undefined) ?? 'unknown';
+  const event: WebWakaEvent = {
+    event: eventType,
+    tenantId,
+    payload,
+    timestamp: Date.now(),
+  };
   const key = `event:${Date.now()}:${Math.random().toString(36).slice(2)}`;
   try {
     await env.EVENTS.put(key, JSON.stringify(event), { expirationTtl: 86400 });
-    log('INFO', 'EventBus', `Event queued: ${type}`, { key });
+    log('INFO', 'EventBus', `Event queued: ${eventType}`, { key, tenantId });
   } catch (err) {
-    log('WARN', 'EventBus', `Failed to queue event: ${type}`, { err: String(err) });
+    log('WARN', 'EventBus', `Failed to queue event: ${eventType}`, { err: String(err) });
   }
   // Also forward to COMMERCE_EVENTS_URL if configured
   if (env.COMMERCE_EVENTS_URL) {
@@ -284,7 +309,7 @@ async function publishEvent(env: Env, type: string, payload: unknown): Promise<v
         signal: AbortSignal.timeout(8000),
       });
     } catch (err) {
-      log('WARN', 'EventBus', `HTTP delivery failed for ${type}`, { err: String(err) });
+      log('WARN', 'EventBus', `HTTP delivery failed for ${eventType}`, { err: String(err) });
     }
   }
 }
