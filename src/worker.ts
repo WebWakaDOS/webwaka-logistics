@@ -187,6 +187,26 @@ async function runMigrations(db: D1Database): Promise<void> {
       version TEXT PRIMARY KEY,
       applied_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
+    CREATE TABLE IF NOT EXISTS delivery_zones (
+      id                   TEXT    PRIMARY KEY,
+      tenant_id            TEXT    NOT NULL,
+      vendor_id            TEXT,
+      state                TEXT    NOT NULL,
+      lga                  TEXT,
+      base_fee             INTEGER NOT NULL DEFAULT 0,
+      per_kg_fee           INTEGER NOT NULL DEFAULT 0,
+      free_above           INTEGER,
+      is_active            INTEGER NOT NULL DEFAULT 1,
+      estimated_days_min   INTEGER NOT NULL DEFAULT 1,
+      estimated_days_max   INTEGER NOT NULL DEFAULT 3,
+      created_at           INTEGER NOT NULL,
+      updated_at           INTEGER NOT NULL,
+      UNIQUE(tenant_id, vendor_id, state, lga)
+    );
+    CREATE INDEX IF NOT EXISTS idx_delivery_zones_tenant_state
+      ON delivery_zones(tenant_id, state, is_active);
+    CREATE INDEX IF NOT EXISTS idx_delivery_zones_vendor
+      ON delivery_zones(tenant_id, vendor_id, state, is_active);
   `;
   try {
     // D1 batch for multi-statement DDL
@@ -404,6 +424,9 @@ const PUBLIC_ROUTES = [
   { method: 'POST', path: '/api/events/commerce' },
   { method: 'POST', path: '/internal/transport-events' },
   { method: 'POST', path: '/api/admin/migrations/run' },
+  // T-CVC-01: Delivery zones are public — Commerce checkout queries these without JWT
+  { method: 'GET', path: '/api/delivery-zones' },
+  { method: 'GET', path: '/api/delivery-zones/estimate' },
 ];
 
 app.use('/api/*', async (c, next) => {
@@ -754,6 +777,228 @@ app.patch('/api/delivery-requests/:orderId/cancel', async (c) => {
     return c.json({ success: true, orderId, status: 'CANCELLED' });
   } catch (err) {
     return c.json({ success: false, error: 'Failed to cancel delivery request' }, 500);
+  }
+});
+
+// ============================================================
+// Delivery Zones API (T-CVC-01)
+// Centralised delivery zone management — extracted from webwaka-commerce.
+// Single source of truth for all platform delivery zone pricing.
+// GET  /api/delivery-zones          — list zones (tenant-scoped)
+// POST /api/delivery-zones          — create/update zone (admin only)
+// GET  /api/delivery-zones/estimate — shipping fee estimate (public)
+// ============================================================
+
+/** Nigeria states — NIPOST/NBS naming convention (Nigeria-First invariant) */
+const NIGERIA_STATES = new Set([
+  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
+  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'Gombe', 'Imo',
+  'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
+  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers',
+  'Sokoto', 'Taraba', 'Yobe', 'Zamfara', 'Abuja FCT',
+]);
+
+/**
+ * GET /api/delivery-zones
+ * Returns active delivery zones for the requesting tenant.
+ * Query params: vendor_id? (filter by vendor), state? (filter by state)
+ * Public: no JWT required — Commerce checkout needs this without auth context.
+ */
+app.get('/api/delivery-zones', async (c) => {
+  const tenantId = c.req.header('x-tenant-id');
+  if (!tenantId) return c.json({ success: false, error: 'x-tenant-id header is required' }, 400);
+  const vendorId = c.req.query('vendor_id');
+  const state = c.req.query('state');
+  try {
+    let query: string;
+    let bindings: unknown[];
+    if (vendorId && state) {
+      query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
+                      estimated_days_min, estimated_days_max, is_active
+               FROM delivery_zones
+               WHERE tenant_id = ? AND vendor_id = ? AND state = ? AND is_active = 1
+               ORDER BY state ASC, lga ASC`;
+      bindings = [tenantId, vendorId, state];
+    } else if (vendorId) {
+      query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
+                      estimated_days_min, estimated_days_max, is_active
+               FROM delivery_zones
+               WHERE tenant_id = ? AND vendor_id = ? AND is_active = 1
+               ORDER BY state ASC, lga ASC`;
+      bindings = [tenantId, vendorId];
+    } else if (state) {
+      query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
+                      estimated_days_min, estimated_days_max, is_active
+               FROM delivery_zones
+               WHERE tenant_id = ? AND (vendor_id IS NULL OR vendor_id = '') AND state = ? AND is_active = 1
+               ORDER BY lga ASC`;
+      bindings = [tenantId, state];
+    } else {
+      query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
+                      estimated_days_min, estimated_days_max, is_active
+               FROM delivery_zones
+               WHERE tenant_id = ? AND is_active = 1
+               ORDER BY state ASC, lga ASC`;
+      bindings = [tenantId];
+    }
+    const stmt = c.env.DB.prepare(query);
+    // Bind all parameters sequentially
+    let bound: D1PreparedStatement = stmt;
+    for (const b of bindings) {
+      bound = bound.bind(b);
+    }
+    const { results } = await bound.all();
+    return c.json({ success: true, data: { zones: results, count: results.length } });
+  } catch (err) {
+    log('ERROR', 'DeliveryZones', 'GET /api/delivery-zones failed', { err: String(err) });
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+/**
+ * POST /api/delivery-zones
+ * Create or update a delivery zone.
+ * Requires JWT with role SUPER_ADMIN, TENANT_ADMIN, or admin.
+ * Body: { vendor_id?, state, lga?, base_fee, per_kg_fee?, free_above?,
+ *         estimated_days_min?, estimated_days_max?, is_active? }
+ */
+app.post('/api/delivery-zones', async (c) => {
+  const tenantId = c.req.header('x-tenant-id');
+  if (!tenantId) return c.json({ success: false, error: 'x-tenant-id header is required' }, 400);
+  const user = c.get('user' as never) as Record<string, unknown> | undefined;
+  const role = (user?.role ?? '') as string;
+  if (!['SUPER_ADMIN', 'TENANT_ADMIN', 'admin'].includes(role)) {
+    return c.json({ success: false, error: 'Forbidden: admin role required' }, 403);
+  }
+  let body: {
+    vendor_id?: string; state: string; lga?: string;
+    base_fee: number; per_kg_fee?: number; free_above?: number;
+    estimated_days_min?: number; estimated_days_max?: number; is_active?: boolean;
+  };
+  try { body = await c.req.json(); } catch { return c.json({ success: false, error: 'Invalid JSON' }, 400); }
+  if (!body.state?.trim()) return c.json({ success: false, error: 'state is required' }, 400);
+  if (!NIGERIA_STATES.has(body.state.trim())) {
+    return c.json({ success: false, error: `Invalid Nigerian state: ${body.state}` }, 400);
+  }
+  if (typeof body.base_fee !== 'number' || body.base_fee < 0) {
+    return c.json({ success: false, error: 'base_fee must be a non-negative number (kobo)' }, 400);
+  }
+  const now = Date.now();
+  const dzId = `dz_${now}_${Math.random().toString(36).slice(2, 9)}`;
+  const vendorId = body.vendor_id?.trim() ?? null;
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO delivery_zones
+         (id, tenant_id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
+          is_active, estimated_days_min, estimated_days_max, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(tenant_id, vendor_id, state, lga)
+       DO UPDATE SET base_fee=excluded.base_fee, per_kg_fee=excluded.per_kg_fee,
+                     free_above=excluded.free_above, is_active=excluded.is_active,
+                     estimated_days_min=excluded.estimated_days_min,
+                     estimated_days_max=excluded.estimated_days_max,
+                     updated_at=excluded.updated_at`
+    ).bind(
+      dzId, tenantId, vendorId, body.state.trim(), body.lga?.trim() ?? null,
+      body.base_fee, body.per_kg_fee ?? 0, body.free_above ?? null,
+      body.is_active !== false ? 1 : 0,
+      body.estimated_days_min ?? 1, body.estimated_days_max ?? 3,
+      now, now,
+    ).run();
+    log('INFO', 'DeliveryZones', 'Zone created/updated', { tenantId, state: body.state, vendorId });
+    return c.json({
+      success: true,
+      data: { id: dzId, vendor_id: vendorId, state: body.state, lga: body.lga ?? null, base_fee: body.base_fee },
+    }, 201);
+  } catch (err) {
+    log('ERROR', 'DeliveryZones', 'POST /api/delivery-zones failed', { err: String(err) });
+    return c.json({ success: false, error: 'Internal server error' }, 500);
+  }
+});
+
+/**
+ * GET /api/delivery-zones/estimate
+ * Calculate shipping fee for a given vendor, state, LGA, order value, and weight.
+ * Query params: vendor_id?, state (required), lga?, order_value?, weight_kg?
+ * Public: no JWT required.
+ */
+app.get('/api/delivery-zones/estimate', async (c) => {
+  const tenantId = c.req.header('x-tenant-id');
+  if (!tenantId) return c.json({ success: false, error: 'x-tenant-id header is required' }, 400);
+  const vendorId = c.req.query('vendor_id');
+  const state = c.req.query('state')?.trim();
+  const lga = c.req.query('lga')?.trim();
+  const orderValue = Number(c.req.query('order_value') ?? '0');
+  const weightKg = Number(c.req.query('weight_kg') ?? '0');
+  if (!state) return c.json({ success: false, error: 'state query param is required' }, 400);
+  type ZoneRow = {
+    base_fee: number; per_kg_fee: number; free_above: number | null;
+    estimated_days_min: number; estimated_days_max: number;
+  };
+  try {
+    let zone: ZoneRow | null = null;
+    // 1. Try LGA-specific zone first
+    if (lga) {
+      if (vendorId) {
+        zone = await c.env.DB.prepare(
+          `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
+           FROM delivery_zones
+           WHERE tenant_id=? AND vendor_id=? AND state=? AND lga=? AND is_active=1 LIMIT 1`
+        ).bind(tenantId, vendorId, state, lga).first<ZoneRow>();
+      } else {
+        zone = await c.env.DB.prepare(
+          `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
+           FROM delivery_zones
+           WHERE tenant_id=? AND (vendor_id IS NULL OR vendor_id='') AND state=? AND lga=? AND is_active=1 LIMIT 1`
+        ).bind(tenantId, state, lga).first<ZoneRow>();
+      }
+    }
+    // 2. Fall back to state-level zone
+    if (!zone) {
+      if (vendorId) {
+        zone = await c.env.DB.prepare(
+          `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
+           FROM delivery_zones
+           WHERE tenant_id=? AND vendor_id=? AND state=? AND (lga IS NULL OR lga='') AND is_active=1 LIMIT 1`
+        ).bind(tenantId, vendorId, state).first<ZoneRow>();
+      } else {
+        zone = await c.env.DB.prepare(
+          `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
+           FROM delivery_zones
+           WHERE tenant_id=? AND (vendor_id IS NULL OR vendor_id='') AND state=? AND (lga IS NULL OR lga='') AND is_active=1 LIMIT 1`
+        ).bind(tenantId, state).first<ZoneRow>();
+      }
+    }
+    if (!zone) {
+      return c.json({
+        success: true,
+        data: {
+          vendor_id: vendorId ?? null, state, lga: lga ?? null,
+          base_fee: 0, per_kg_fee: 0, weight_fee: 0, total_fee: 0,
+          free_above: null, is_free: false,
+          estimated_days_min: 1, estimated_days_max: 7,
+          note: 'No delivery zone configured for this region',
+        },
+      });
+    }
+    const isFree = zone.free_above !== null && orderValue >= zone.free_above;
+    const weightFee = Math.round(weightKg * zone.per_kg_fee);
+    const totalFee = isFree ? 0 : zone.base_fee + weightFee;
+    return c.json({
+      success: true,
+      data: {
+        vendor_id: vendorId ?? null, state, lga: lga ?? null,
+        base_fee: zone.base_fee, per_kg_fee: zone.per_kg_fee,
+        weight_kg: weightKg, weight_fee: weightFee,
+        free_above: zone.free_above,
+        is_free: isFree, total_fee: totalFee,
+        estimated_days_min: zone.estimated_days_min,
+        estimated_days_max: zone.estimated_days_max,
+      },
+    });
+  } catch (err) {
+    log('ERROR', 'DeliveryZones', 'GET /api/delivery-zones/estimate failed', { err: String(err) });
+    return c.json({ success: false, error: 'Internal server error' }, 500);
   }
 });
 
