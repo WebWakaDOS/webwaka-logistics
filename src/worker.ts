@@ -928,8 +928,9 @@ app.get('/api/delivery-zones/estimate', async (c) => {
   const vendorId = c.req.query('vendor_id');
   const state = c.req.query('state')?.trim();
   const lga = c.req.query('lga')?.trim();
-  const orderValue = Number(c.req.query('order_value') ?? '0');
-  const weightKg = Number(c.req.query('weight_kg') ?? '0');
+  // Clamp to non-negative values to prevent fee manipulation via negative inputs (T-CVC-01 QA)
+  const orderValue = Math.max(0, Number(c.req.query('order_value') ?? '0') || 0);
+  const weightKg = Math.max(0, Number(c.req.query('weight_kg') ?? '0') || 0);
   if (!state) return c.json({ success: false, error: 'state query param is required' }, 400);
   type ZoneRow = {
     base_fee: number; per_kg_fee: number; free_above: number | null;
