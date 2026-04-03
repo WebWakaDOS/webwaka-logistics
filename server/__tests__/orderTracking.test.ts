@@ -399,3 +399,102 @@ describe('POST /api/events/commerce — delivery.status_changed', () => {
     expect(history[2].status).toBe('IN_TRANSIT');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QA Hardening Tests (T-CVC-02 QA)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('T-CVC-02-SEC-01: constant-time token verification', () => {
+  it('rejects a token whose signature is a valid base64url string but wrong value', async () => {
+    const db = makeDb();
+    const data = await generateToken(db);
+    // Flip the last character of the signature to produce a different-length-but-valid base64url string
+    const [payload, sig] = data.token.split('.');
+    const flippedSig = sig.slice(0, -1) + (sig.slice(-1) === 'A' ? 'B' : 'A');
+    const tamperedToken = `${payload}.${flippedSig}`;
+    const req = new Request(`https://logistics.internal/api/orders/track?token=${encodeURIComponent(tamperedToken)}`);
+    const res = await app.fetch(req, makeEnv(db));
+    // Must be rejected — constant-time verify catches the mismatch
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a token whose signature contains non-base64url characters', async () => {
+    const db = makeDb();
+    const data = await generateToken(db);
+    const [payload] = data.token.split('.');
+    const badSigToken = `${payload}.!!!not-base64url!!!`;
+    const req = new Request(`https://logistics.internal/api/orders/track?token=${encodeURIComponent(badSigToken)}`);
+    const res = await app.fetch(req, makeEnv(db));
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('T-CVC-02-SEC-02: fail-closed on missing TRACKING_SECRET', () => {
+  it('returns 503 from /internal/tracking-token when TRACKING_SECRET is absent', async () => {
+    const db = makeDb();
+    const envNoSecret = { ...makeEnv(db), TRACKING_SECRET: undefined };
+    const req = new Request('https://logistics.internal/internal/tracking-token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${INTER_SERVICE_SECRET}`,
+      },
+      body: JSON.stringify({ orderId: ORDER_ID, tenantId: TENANT_ID }),
+    });
+    const res = await app.fetch(req, envNoSecret);
+    expect(res.status).toBe(503);
+  });
+
+  it('returns 503 from GET /api/orders/track when TRACKING_SECRET is absent', async () => {
+    const db = makeDb();
+    // Generate a valid token with the secret present first
+    const data = await generateToken(db);
+    // Now try to verify it without the secret
+    const envNoSecret = { ...makeEnv(db), TRACKING_SECRET: undefined };
+    const req = new Request(`https://logistics.internal/api/orders/track?token=${encodeURIComponent(data.token)}`);
+    const res = await app.fetch(req, envNoSecret);
+    expect(res.status).toBe(503);
+  });
+});
+
+describe('T-CVC-02-EVT-01: canonical status allowlist enforcement', () => {
+  it('returns 400 for an unknown status value', async () => {
+    const db = makeDb();
+    const req = new Request('https://logistics.internal/api/events/commerce', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        event: 'delivery.status_changed',
+        tenantId: TENANT_ID,
+        payload: { orderId: ORDER_ID, tenantId: TENANT_ID, status: 'HACKED_STATUS' },
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    const res = await app.fetch(req, makeEnv(db));
+    expect(res.status).toBe(400);
+    const json = await res.json<{ success: boolean; error: string }>();
+    expect(json.error).toContain('Unknown canonical status');
+  });
+
+  it('accepts all canonical status values', async () => {
+    const canonicalStatuses = [
+      'PENDING', 'PICKING_PROVIDER', 'PICKED_UP', 'IN_TRANSIT',
+      'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RETURNED', 'CANCELLED',
+    ];
+    for (const status of canonicalStatuses) {
+      const db = makeDb();
+      const req = new Request('https://logistics.internal/api/events/commerce', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          event: 'delivery.status_changed',
+          tenantId: TENANT_ID,
+          payload: { orderId: ORDER_ID, tenantId: TENANT_ID, status },
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      const res = await app.fetch(req, makeEnv(db));
+      expect(res.status, `Expected 200 for canonical status: ${status}`).toBe(200);
+    }
+  });
+});

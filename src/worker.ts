@@ -1055,9 +1055,27 @@ async function signTrackingToken(secret: string, data: string): Promise<string> 
     .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
+/**
+ * Constant-time HMAC-SHA256 verification using SubtleCrypto.verify().
+ * Avoids timing-attack leakage from string comparison (fixes T-CVC-02-SEC-01).
+ */
 async function verifyTrackingToken(secret: string, data: string, sig: string): Promise<boolean> {
-  const expected = await signTrackingToken(secret, data);
-  return expected === sig;
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['verify'],
+  );
+  // Re-pad base64url to standard base64 before decoding
+  const padded = sig.replace(/-/g, '+').replace(/_/g, '/') + '=='.slice(0, (4 - (sig.length % 4)) % 4);
+  let sigBytes: Uint8Array;
+  try {
+    sigBytes = Uint8Array.from(atob(padded), ch => ch.charCodeAt(0));
+  } catch {
+    return false; // malformed signature — not a valid base64url string
+  }
+  return crypto.subtle.verify('HMAC', key, sigBytes, new TextEncoder().encode(data));
 }
 
 // POST /internal/tracking-token — generate a signed tracking token (Service Binding only)
@@ -1075,7 +1093,12 @@ app.post('/internal/tracking-token', async (c) => {
   const { orderId, tenantId, sourceModule } = body as Record<string, string>;
   if (!orderId || !tenantId) return c.json({ error: 'orderId and tenantId are required' }, 400);
 
-  const trackingSecret = c.env.TRACKING_SECRET ?? c.env.INTER_SERVICE_SECRET ?? 'dev-tracking-secret';
+  // Fail-closed: TRACKING_SECRET must be explicitly set (T-CVC-02-SEC-02)
+  const trackingSecret = c.env.TRACKING_SECRET;
+  if (!trackingSecret) {
+    log('ERROR', 'TrackingToken', 'TRACKING_SECRET is not configured — refusing to issue token');
+    return c.json({ error: 'Tracking service not configured' }, 503);
+  }
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + 7 * 24 * 60 * 60; // 7-day TTL
 
@@ -1111,7 +1134,12 @@ app.get('/api/orders/track', async (c) => {
 
   if (tokenParam) {
     // Validate signed token
-    const trackingSecret = c.env.TRACKING_SECRET ?? c.env.INTER_SERVICE_SECRET ?? 'dev-tracking-secret';
+    // Fail-closed: TRACKING_SECRET must be explicitly set (T-CVC-02-SEC-02)
+    const trackingSecret = c.env.TRACKING_SECRET;
+    if (!trackingSecret) {
+      log('ERROR', 'OrderTracking', 'TRACKING_SECRET is not configured — cannot verify token');
+      return c.json({ success: false, error: 'Tracking service not configured' }, 503);
+    }
     const parts = tokenParam.split('.');
     if (parts.length !== 2) return c.json({ success: false, error: 'Invalid tracking token' }, 400);
 
@@ -1242,6 +1270,16 @@ app.post('/api/events/commerce', async (c) => {
     const { orderId, tenantId, status, provider, trackingUrl, estimatedDelivery, notes } = payload as Record<string, string>;
     if (!orderId || !tenantId || !status) {
       return c.json({ success: false, error: 'orderId, tenantId, and status are required' }, 400);
+    }
+
+    // T-CVC-02-EVT-01: Validate against canonical status allowlist to prevent arbitrary string injection
+    const CANONICAL_STATUSES = new Set([
+      'PENDING', 'PICKING_PROVIDER', 'PICKED_UP', 'IN_TRANSIT',
+      'OUT_FOR_DELIVERY', 'DELIVERED', 'FAILED', 'RETURNED', 'CANCELLED',
+    ]);
+    if (!CANONICAL_STATUSES.has(status)) {
+      log('WARN', 'CommerceEvents', 'Rejected delivery.status_changed with unknown status', { orderId, status });
+      return c.json({ success: false, error: `Unknown canonical status: ${status}` }, 400);
     }
 
     const now = Math.floor(Date.now() / 1000);
