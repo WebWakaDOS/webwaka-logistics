@@ -19,6 +19,8 @@ import ParcelDetail from "./pages/ParcelDetail";
 import PublicTracking from "./pages/PublicTracking";
 import Dispatch from "./pages/Dispatch";
 import ReceivingScanner from "./pages/ReceivingScanner";
+import RiderOnboarding from "./pages/RiderOnboarding";
+import RiderApplications from "./pages/RiderApplications";
 import { useEffect } from "react";
 import { initSyncEngine, registerSyncHandler } from "./lib/syncEngine";
 import { initPodPhotoSync } from "./lib/podPhotoSyncWorker";
@@ -168,6 +170,20 @@ function Router() {
         {() => (
           <AuthenticatedLayout>
             <ReceivingScanner />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/riders/onboarding">
+        {() => (
+          <AuthenticatedLayout>
+            <RiderOnboarding />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/riders/applications">
+        {() => (
+          <AuthenticatedLayout>
+            <RiderApplications />
           </AuthenticatedLayout>
         )}
       </Route>

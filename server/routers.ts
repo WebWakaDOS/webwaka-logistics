@@ -6,6 +6,7 @@ import { parcelsRouter } from "./routers/parcels";
 import { logisticsRouter } from "./routers/logistics";
 import { dispatchRouter } from "./routers/dispatch";
 import { warehouseRouter } from "./routers/warehouse";
+import { ridersRouter } from "./routers/riders";
 
 export const appRouter = router({
     // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
@@ -32,6 +33,9 @@ export const appRouter = router({
 
   /** T-LOG-04: Offline-First Warehouse Receiving Scanner */
   warehouse: warehouseRouter,
+
+  /** T-LOG-05: Gig Rider Onboarding & Automated KYC Verification */
+  riders: ridersRouter,
 
   // TODO: add feature routers here, e.g.
   // todo: router({

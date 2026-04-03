@@ -158,3 +158,83 @@ export const deliveryRequests = sqliteTable("delivery_requests", {
 
 export type DeliveryRequest = typeof deliveryRequests.$inferSelect;
 export type InsertDeliveryRequest = typeof deliveryRequests.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Riders & KYC — T-LOG-05 Automated KYC Verification for Gig Riders
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const RIDER_KYC_STATUS = [
+  "PENDING",
+  "VERIFYING",
+  "ACTIVE",
+  "REJECTED",
+] as const;
+
+export type RiderKycStatus = (typeof RIDER_KYC_STATUS)[number];
+
+export const RIDER_VEHICLE_TYPE = ["BIKE", "CAR", "VAN", "TRUCK"] as const;
+
+export type RiderVehicleType = (typeof RIDER_VEHICLE_TYPE)[number];
+
+/**
+ * Rider onboarding & KYC state.
+ *
+ * NDPR compliance:
+ *  - Driver's license NUMBER is NOT stored — only the R2 document key/URL.
+ *  - BVN is NEVER stored.
+ *  - All queries must be scoped by tenantId.
+ */
+export const riders = sqliteTable("riders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  tenantId: text("tenantId").notNull(),
+  /** Internal user account linked to this rider (nullable — rider may not have app login yet) */
+  userId: integer("userId"),
+  fullName: text("fullName").notNull(),
+  phone: text("phone").notNull(),
+  address: text("address").notNull(),
+  state: text("state").notNull(),
+  lga: text("lga").notNull(),
+  vehicleType: text("vehicleType").notNull(),
+  plateNumber: text("plateNumber").notNull(),
+  /** R2 object key for the uploaded driver's license document — NDPR: no raw number */
+  licenseDocKey: text("licenseDocKey"),
+  /** Signed R2 URL for the license document */
+  licenseDocUrl: text("licenseDocUrl"),
+  /** Optional license expiry for proactive suspension (F-02) */
+  licenseExpiresAt: integer("licenseExpiresAt", { mode: "timestamp" }),
+  /** KYC state machine: PENDING → VERIFYING → ACTIVE | REJECTED */
+  kycStatus: text("kycStatus").default("PENDING").notNull(),
+  /** Opaque reference returned by the Fintech KYC system */
+  kycReference: text("kycReference"),
+  /** Human-readable rejection reason from Fintech KYC */
+  rejectionReason: text("rejectionReason"),
+  submittedAt: integer("submittedAt", { mode: "timestamp" }),
+  verifiedAt: integer("verifiedAt", { mode: "timestamp" }),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export type Rider = typeof riders.$inferSelect;
+export type InsertRider = typeof riders.$inferInsert;
+
+/**
+ * Guarantors for a rider.
+ * Each rider must have at least 1 guarantor (Nigeria-standard compliance).
+ */
+export const guarantors = sqliteTable("guarantors", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  tenantId: text("tenantId").notNull(),
+  riderId: integer("riderId").notNull(),
+  fullName: text("fullName").notNull(),
+  phone: text("phone").notNull(),
+  address: text("address").notNull(),
+  relationship: text("relationship").notNull(),
+  /** R2 object key for the guarantor's ID document — NDPR: no raw ID number */
+  idDocKey: text("idDocKey"),
+  /** Signed R2 URL for the guarantor ID document */
+  idDocUrl: text("idDocUrl"),
+  createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export type Guarantor = typeof guarantors.$inferSelect;
+export type InsertGuarantor = typeof guarantors.$inferInsert;

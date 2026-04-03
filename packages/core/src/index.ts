@@ -1,5 +1,5 @@
 /**
- * @webwaka/core v1.3.0
+ * @webwaka/core v1.4.0
  * Shared event contracts and platform services for the WebWaka platform.
  * Event type strings are the single source of truth — never hardcode them.
  */
@@ -18,6 +18,19 @@ export const CommerceEvents = {
 
 export type CommerceEventType =
   (typeof CommerceEvents)[keyof typeof CommerceEvents];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// KYC Event Type Constants  [T-LOG-05]
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const KycEvents = {
+  /** Logistics → Fintech: rider identity documents submitted, requesting verification */
+  VERIFICATION_REQUESTED: "kyc.verification_requested",
+  /** Fintech → Logistics: identity check completed with approved/rejected result */
+  VERIFICATION_COMPLETED: "kyc.verification_completed",
+} as const;
+
+export type KycEventType = (typeof KycEvents)[keyof typeof KycEvents];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Address schema (shared between ORDER_READY_DELIVERY and DELIVERY_QUOTE)
@@ -92,11 +105,52 @@ export interface DeliveryStatusPayload {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// KYC Payloads  [T-LOG-05]
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface KycGuarantorSummary {
+  fullName: string;
+  phone: string;
+  relationship: string;
+  /** Signed R2 URL — expires 7 days after issuance */
+  idDocUrl: string;
+}
+
+/**
+ * Outbound: Logistics → Fintech.
+ * Emitted when a rider submits their onboarding form.
+ * NDPR compliance: no raw license number, no BVN — only signed R2 document URLs.
+ */
+export interface KycVerificationRequestedPayload {
+  riderId: number;
+  tenantId: string;
+  fullName: string;
+  phone: string;
+  /** Signed R2 URL to the uploaded driver's license document — expires 7 days */
+  licenseDocUrl: string;
+  guarantors: KycGuarantorSummary[];
+}
+
+/**
+ * Inbound: Fintech → Logistics.
+ * Consumed by the KYC webhook to update rider status.
+ */
+export interface KycVerificationCompletedPayload {
+  riderId: number;
+  tenantId: string;
+  status: "approved" | "rejected";
+  /** Human-readable reason provided only when status is "rejected" */
+  reason?: string;
+  verifiedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Generic platform event envelope
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface PlatformEvent<T = unknown> {
-  type: CommerceEventType;
+  /** Accepts both CommerceEventType and KycEventType */
+  type: string;
   payload: T;
   publishedAt: string;
 }
