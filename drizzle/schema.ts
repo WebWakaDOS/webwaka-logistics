@@ -68,6 +68,12 @@ export const parcels = sqliteTable("parcels", {
   waybillId: text("waybillId"),
   /** P12: Seat blocking status for transport cargo */
   seatAssignmentStatus: text("seatAssignmentStatus").default("none").notNull(),
+  /** L-06: Delivery OTP — SHA-256 hash of the 4-digit code sent to the customer */
+  otpCode: text("otpCode"),
+  /** L-06: OTP expiry unix timestamp (10 minutes from generation) */
+  otpExpiresAt: integer("otpExpiresAt"),
+  /** L-06: Timestamp when the OTP was successfully verified by the rider */
+  otpVerifiedAt: integer("otpVerifiedAt", { mode: "timestamp" }),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   deletedAt: integer("deletedAt", { mode: "timestamp" }),

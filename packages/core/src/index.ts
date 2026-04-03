@@ -1,8 +1,10 @@
 /**
- * @webwaka/core v1.2.0
- * Shared event contracts for the WebWaka platform.
+ * @webwaka/core v1.3.0
+ * Shared event contracts and platform services for the WebWaka platform.
  * Event type strings are the single source of truth — never hardcode them.
  */
+
+export * from "./sms";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Commerce Event Type Constants

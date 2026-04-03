@@ -11,4 +11,6 @@ export const ENV = {
   interServiceSecret: process.env.INTER_SERVICE_SECRET ?? "",
   /** P12: Base URL of the webwaka-transport service */
   transportBaseUrl: process.env.TRANSPORT_BASE_URL ?? "",
+  /** L-06: Termii API key for OTP SMS delivery via @webwaka/core Termii provider */
+  termiiApiKey: process.env.TERMII_API_KEY ?? "",
 };

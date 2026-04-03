@@ -263,6 +263,47 @@ export async function getProofOfDelivery(tenantId: string, parcelId: number) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// L-06: OTP Verification Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Store a hashed OTP and expiry on the parcel record.
+ * The raw OTP is NEVER stored — only the SHA-256 hash.
+ */
+export async function storeParcelOtp(
+  tenantId: string,
+  parcelId: number,
+  otpHash: string,
+  otpExpiresAt: number,
+): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  logger.info("Storing OTP for parcel", { tenantId, parcelId });
+
+  db.update(parcels)
+    .set({ otpCode: otpHash, otpExpiresAt, otpVerifiedAt: null, updatedAt: new Date() })
+    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)))
+    .run();
+}
+
+/**
+ * Mark the OTP as verified by setting otpVerifiedAt.
+ * Also clears the stored hash for security (replay prevention).
+ */
+export async function markOtpVerified(tenantId: string, parcelId: number): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  logger.info("Marking OTP verified", { tenantId, parcelId });
+
+  db.update(parcels)
+    .set({ otpVerifiedAt: new Date(), otpCode: null, updatedAt: new Date() })
+    .where(and(eq(parcels.tenantId, tenantId), eq(parcels.id, parcelId)))
+    .run();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // P12: Transport Integration Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 

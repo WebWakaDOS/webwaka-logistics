@@ -37,6 +37,19 @@ drizzle/         Database schema and migrations
 - `DATABASE_PATH` — SQLite file path (defaults to `local.db`)
 - `INTER_SERVICE_SECRET` — shared secret for inter-service auth (transport ↔ logistics)
 - `TRANSPORT_BASE_URL` — base URL of the webwaka-transport service
+- `TERMII_API_KEY` — Termii SMS provider API key (L-06: required for OTP delivery)
+- `OTP_OFFLINE_SECRET` — HMAC secret for offline OTP tokens (L-06, defaults to built-in fallback)
+
+## Implemented Features
+
+### L-06: Secure OTP Verification for Proof of Delivery
+- When a rider marks a parcel `OUT_FOR_DELIVERY`, a 4-digit OTP is auto-generated, SHA-256 hashed (stored in DB), and sent to the recipient's phone via the `@webwaka/core` Termii provider
+- The rider's PWA receives a pre-computed 12-char HMAC offline token, cached in Dexie IndexedDB
+- Before a POD can be submitted or status set to `DELIVERED`, the OTP must be verified
+- **Online path**: `verifyOtp` tRPC procedure validates the entered code against the stored hash
+- **Offline path**: client-side WebCrypto HMAC verification using the cached Dexie token — no server needed
+- Verified OTPs are recorded with `otpVerifiedAt` timestamp in the `parcels` table
+- 30 unit tests covering: generation, hashing, offline tokens, expiry, replay prevention, Termii dispatch failure modes
 
 ## Migration Notes (Replit)
 

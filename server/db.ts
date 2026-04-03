@@ -127,6 +127,20 @@ function runMigrations(sqlite: Database.Database) {
       // Column already exists — safe to ignore
     }
   }
+
+  // L-06: Add OTP verification columns to existing parcels table (idempotent)
+  const l06Columns = [
+    `ALTER TABLE parcels ADD COLUMN otpCode TEXT`,
+    `ALTER TABLE parcels ADD COLUMN otpExpiresAt INTEGER`,
+    `ALTER TABLE parcels ADD COLUMN otpVerifiedAt INTEGER`,
+  ];
+  for (const stmt of l06Columns) {
+    try {
+      sqlite.exec(stmt);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 export { getDb };

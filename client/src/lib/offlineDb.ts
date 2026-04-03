@@ -14,7 +14,8 @@ export type MutationType =
   | "parcels.create"
   | "parcels.addUpdate"
   | "parcels.dispatch"
-  | "parcels.submitPOD";
+  | "parcels.submitPOD"
+  | "parcels.verifyOtp";
 
 export interface OfflineParcel {
   /** Local IndexedDB auto-increment key */
@@ -59,12 +60,38 @@ export interface MutationQueueItem {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// L-06: Offline OTP Cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Stores the offline fallback token for a parcel's OTP.
+ * When the rider is offline at the customer's door, the app uses this to verify
+ * the OTP client-side without hitting the server.
+ */
+export interface OfflineOtpCache {
+  /** Local IndexedDB auto-increment key */
+  localId?: number;
+  /** Server-assigned parcel ID */
+  parcelId: number;
+  /**
+   * 12-char HMAC token pre-computed by the server on addUpdate(OUT_FOR_DELIVERY).
+   * Used for offline OTP verification: verifyOfflineToken(parcelId, enteredOtp, this)
+   */
+  offlineToken: string;
+  /** Unix timestamp when this cache entry expires (matches server otpExpiresAt) */
+  expiresAt: number;
+  /** Tracking number — for display purposes only */
+  trackingNumber: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Dexie Database Definition
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WebWakaLogisticsDB extends Dexie {
   parcels!: Table<OfflineParcel, number>;
   mutationQueue!: Table<MutationQueueItem, number>;
+  otpCache!: Table<OfflineOtpCache, number>;
 
   constructor() {
     super("webwaka-logistics-v1");
@@ -74,6 +101,13 @@ class WebWakaLogisticsDB extends Dexie {
       parcels: "++localId, clientId, tenantId, synced, status",
       /** Mutation queue for offline-first sync [Part 6, CORE-1] */
       mutationQueue: "++localId, type, synced, createdAt",
+    });
+
+    this.version(2).stores({
+      parcels: "++localId, clientId, tenantId, synced, status",
+      mutationQueue: "++localId, type, synced, createdAt",
+      /** L-06: Offline OTP cache — keyed by parcelId for fast lookup */
+      otpCache: "++localId, parcelId, expiresAt",
     });
   }
 }
@@ -128,4 +162,65 @@ export async function markParcelSynced(localId: number, serverId: number, tracki
 /** Get all local parcels for a tenant (for offline list view) */
 export async function getLocalParcels(tenantId: string): Promise<OfflineParcel[]> {
   return offlineDb.parcels.where("tenantId").equals(tenantId).reverse().sortBy("createdAt");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// L-06: Offline OTP Cache Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Store the server-issued offline OTP token in Dexie for a specific parcel */
+export async function cacheOfflineOtpToken(
+  parcelId: number,
+  trackingNumber: string,
+  offlineToken: string,
+  expiresAt: number,
+): Promise<void> {
+  // Remove any stale entry for this parcel
+  await offlineDb.otpCache.where("parcelId").equals(parcelId).delete();
+  await offlineDb.otpCache.add({ parcelId, trackingNumber, offlineToken, expiresAt });
+}
+
+/** Retrieve the cached offline OTP entry for a parcel */
+export async function getCachedOtpToken(parcelId: number): Promise<OfflineOtpCache | undefined> {
+  return offlineDb.otpCache.where("parcelId").equals(parcelId).first();
+}
+
+/**
+ * Client-side HMAC-based offline OTP verification.
+ * Mirrors buildOfflineToken() from server/otp.ts but uses WebCrypto API.
+ */
+export async function verifyOtpOffline(
+  parcelId: number,
+  enteredOtp: string,
+  cachedToken: string,
+): Promise<boolean> {
+  try {
+    const encoder = new TextEncoder();
+    const OFFLINE_HMAC_KEY = "webwaka-logistics-offline-otp-fallback";
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(OFFLINE_HMAC_KEY),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+
+    const data = encoder.encode(`${parcelId}|${enteredOtp}`);
+    const sig = await crypto.subtle.sign("HMAC", key, data);
+    const hex = Array.from(new Uint8Array(sig))
+      .map(b => b.toString(16).padStart(2, "0"))
+      .join("")
+      .slice(0, 12);
+
+    return hex === cachedToken;
+  } catch {
+    return false;
+  }
+}
+
+/** Clear expired OTP cache entries */
+export async function pruneExpiredOtpCache(): Promise<void> {
+  const now = Date.now();
+  await offlineDb.otpCache.where("expiresAt").below(now).delete();
 }

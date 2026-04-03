@@ -26,10 +26,22 @@ import {
   getProofOfDelivery,
   linkParcelToTrip,
   listParcels,
+  markOtpVerified,
   searchParcels,
   softDeleteParcel,
+  storeParcelOtp,
   updateParcelStatus,
 } from "../parcels.db";
+import {
+  buildOfflineToken,
+  generateOtp,
+  hashOtp,
+  isOtpExpired,
+  otpExpiryTimestamp,
+  sendOtpSms,
+  verifyOfflineToken,
+  verifyOtpHash,
+} from "../otp";
 
 const logger = createLogger("ParcelsRouter");
 
@@ -214,6 +226,7 @@ export const parcelsRouter = router({
 
   /**
    * Add a status update to a parcel (immutable event log). [Part 10.4]
+   * L-06: Triggers OTP generation + Termii SMS when status → OUT_FOR_DELIVERY.
    * Publishes appropriate event to CORE-2 Event Bus.
    */
   addUpdate: protectedProcedure
@@ -221,6 +234,14 @@ export const parcelsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const parcel = await getParcelById(input.tenantId, input.parcelId);
       if (!parcel) throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+
+      // L-06: Block DELIVERED transition if OTP has not been verified
+      if (input.status === "DELIVERED" && !parcel.otpVerifiedAt) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "OTP must be verified before marking delivery as complete.",
+        });
+      }
 
       logger.info("Adding parcel update", {
         tenantId: input.tenantId,
@@ -247,6 +268,27 @@ export const parcelsRouter = router({
       }
       await updateParcelStatus(input.tenantId, input.parcelId, input.status, extra as any);
 
+      // L-06: Automatically generate and send OTP when rider marks OUT_FOR_DELIVERY
+      let otpOfflineToken: string | undefined;
+      if (input.status === "OUT_FOR_DELIVERY") {
+        const otpCode = generateOtp();
+        const otpHash = hashOtp(otpCode);
+        const otpExpiresAt = otpExpiryTimestamp();
+
+        await storeParcelOtp(input.tenantId, input.parcelId, otpHash, otpExpiresAt);
+
+        // Send OTP via @webwaka/core Termii provider (non-fatal if SMS fails)
+        await sendOtpSms(parcel.recipientPhone, parcel.recipientName, parcel.trackingNumber, otpCode);
+
+        // Pre-compute offline token for the rider's Dexie cache
+        otpOfflineToken = buildOfflineToken(input.parcelId, otpCode);
+
+        logger.info("OTP generated for OUT_FOR_DELIVERY", {
+          tenantId: input.tenantId,
+          parcelId: input.parcelId,
+        });
+      }
+
       // Publish event to CORE-2 [Part 5]
       const eventMap: Record<string, string> = {
         COLLECTED: "parcel.collected",
@@ -268,7 +310,121 @@ export const parcelsRouter = router({
         });
       }
 
-      return { success: true };
+      return {
+        success: true,
+        /** L-06: Offline fallback token — rider app caches this in Dexie */
+        otpOfflineToken,
+      };
+    }),
+
+  /**
+   * L-06: Request a new OTP to be sent to the recipient.
+   * Regenerates the OTP and re-sends the SMS. Rate limiting: must be OUT_FOR_DELIVERY.
+   */
+  requestOtp: agentProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        parcelId: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const parcel = await getParcelById(input.tenantId, input.parcelId);
+      if (!parcel) throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+
+      if (parcel.status !== "OUT_FOR_DELIVERY") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "OTP can only be requested for parcels that are OUT_FOR_DELIVERY.",
+        });
+      }
+
+      if (parcel.otpVerifiedAt) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "OTP has already been verified for this delivery.",
+        });
+      }
+
+      const otpCode = generateOtp();
+      const otpHash = hashOtp(otpCode);
+      const otpExpiresAt = otpExpiryTimestamp();
+
+      await storeParcelOtp(input.tenantId, input.parcelId, otpHash, otpExpiresAt);
+      await sendOtpSms(parcel.recipientPhone, parcel.recipientName, parcel.trackingNumber, otpCode);
+
+      const otpOfflineToken = buildOfflineToken(input.parcelId, otpCode);
+
+      logger.info("OTP resent on request", { tenantId: input.tenantId, parcelId: input.parcelId });
+
+      return { success: true, otpOfflineToken };
+    }),
+
+  /**
+   * L-06: Verify the OTP entered by the rider.
+   * Online path: validate against the stored hash in DB.
+   * Also accepts an offline token (pre-computed HMAC) for offline verification fallback.
+   */
+  verifyOtp: agentProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        parcelId: z.number().int().positive(),
+        /** 4-digit OTP entered by the rider (as received by customer via SMS) */
+        otpCode: z.string().length(4).regex(/^\d{4}$/).optional(),
+        /** 12-char offline HMAC token from rider's Dexie cache (offline fallback) */
+        offlineToken: z.string().length(12).optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      if (!input.otpCode && !input.offlineToken) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Provide either otpCode or offlineToken." });
+      }
+
+      const parcel = await getParcelById(input.tenantId, input.parcelId);
+      if (!parcel) throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+
+      if (parcel.otpVerifiedAt) {
+        // Idempotent — already verified
+        return { success: true, alreadyVerified: true };
+      }
+
+      if (parcel.status !== "OUT_FOR_DELIVERY") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "OTP verification is only valid when parcel is OUT_FOR_DELIVERY.",
+        });
+      }
+
+      let verified = false;
+
+      // Online path: verify against the hashed OTP in the database
+      if (input.otpCode && parcel.otpCode && parcel.otpExpiresAt) {
+        if (isOtpExpired(parcel.otpExpiresAt)) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "OTP has expired. Please request a new one.",
+          });
+        }
+        verified = verifyOtpHash(input.otpCode, parcel.otpCode);
+      }
+
+      // Offline fallback: verify the pre-computed HMAC token
+      if (!verified && input.offlineToken && input.otpCode) {
+        verified = verifyOfflineToken(input.parcelId, input.otpCode, input.offlineToken);
+      }
+
+      if (!verified) {
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: "Invalid OTP. Please ask the customer to check their SMS.",
+        });
+      }
+
+      await markOtpVerified(input.tenantId, input.parcelId);
+      logger.info("OTP verified successfully", { tenantId: input.tenantId, parcelId: input.parcelId });
+
+      return { success: true, alreadyVerified: false };
     }),
 
   /**
@@ -320,6 +476,7 @@ export const parcelsRouter = router({
 
   /**
    * Submit proof of delivery with optional photo and signature. [Part 10.4]
+   * L-06: Requires OTP verification before POD can be submitted.
    * Images stored in S3/R2 via platform storage helpers.
    */
   submitPOD: agentProcedure
@@ -327,6 +484,14 @@ export const parcelsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const parcel = await getParcelById(input.tenantId, input.parcelId);
       if (!parcel) throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+
+      // L-06: Enforce OTP verification gate before POD can be submitted
+      if (!parcel.otpVerifiedAt) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "Delivery OTP must be verified before submitting proof of delivery. Ask the customer for the OTP sent to their phone.",
+        });
+      }
 
       logger.info("Submitting proof of delivery", {
         tenantId: input.tenantId,
