@@ -41,6 +41,8 @@ export interface Env {
   KWIK_WEBHOOK_SECRET?: string;
   SENDBOX_WEBHOOK_SECRET?: string;
   ENVIRONMENT?: string;
+  TRACKING_SECRET?: string;       // HMAC-SHA256 secret for signing tracking tokens (T-CVC-02)
+  LOGISTICS_PORTAL_URL?: string;  // Public URL of the Logistics tracking portal (T-CVC-02)
 }
 
 // ============================================================
@@ -207,6 +209,33 @@ async function runMigrations(db: D1Database): Promise<void> {
       ON delivery_zones(tenant_id, state, is_active);
     CREATE INDEX IF NOT EXISTS idx_delivery_zones_vendor
       ON delivery_zones(tenant_id, vendor_id, state, is_active);
+    CREATE TABLE IF NOT EXISTS order_tracking (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      orderId       TEXT    NOT NULL,
+      tenantId      TEXT    NOT NULL,
+      sourceModule  TEXT    NOT NULL DEFAULT 'commerce',
+      status        TEXT    NOT NULL DEFAULT 'PENDING',
+      trackingUrl   TEXT,
+      provider      TEXT,
+      estimatedDelivery TEXT,
+      notes         TEXT,
+      statusHistory TEXT    NOT NULL DEFAULT '[]',
+      createdAt     INTEGER NOT NULL DEFAULT (unixepoch()),
+      updatedAt     INTEGER NOT NULL DEFAULT (unixepoch()),
+      UNIQUE(orderId, tenantId)
+    );
+    CREATE INDEX IF NOT EXISTS idx_order_tracking_tenant
+      ON order_tracking(tenantId, orderId);
+    CREATE TABLE IF NOT EXISTS tracking_tokens (
+      token         TEXT    PRIMARY KEY,
+      orderId       TEXT    NOT NULL,
+      tenantId      TEXT    NOT NULL,
+      sourceModule  TEXT    NOT NULL DEFAULT 'commerce',
+      expiresAt     INTEGER NOT NULL,
+      createdAt     INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+    CREATE INDEX IF NOT EXISTS idx_tracking_tokens_order
+      ON tracking_tokens(orderId, tenantId);
   `;
   try {
     // D1 batch for multi-statement DDL
@@ -427,6 +456,8 @@ const PUBLIC_ROUTES = [
   // T-CVC-01: Delivery zones are public — Commerce checkout queries these without JWT
   { method: 'GET', path: '/api/delivery-zones' },
   { method: 'GET', path: '/api/delivery-zones/estimate' },
+  // T-CVC-02: Public order tracking — buyer tracking via signed token
+  { method: 'GET', path: '/api/orders/track' },
 ];
 
 app.use('/api/*', async (c, next) => {
@@ -1004,6 +1035,150 @@ app.get('/api/delivery-zones/estimate', async (c) => {
 });
 
 // ============================================================
+// Order Tracking Portal (T-CVC-02)
+// Centralised real-time order tracking — extracted from webwaka-commerce.
+// GET  /api/orders/track           — public tracking endpoint (token or orderId+tenantId)
+// POST /internal/tracking-token   — generate a signed tracking token (Service Binding only)
+// ============================================================
+
+/** HMAC-SHA256 helpers (Workers SubtleCrypto — no Node.js crypto) */
+async function signTrackingToken(secret: string, data: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  return btoa(String.fromCharCode(...new Uint8Array(sig)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+async function verifyTrackingToken(secret: string, data: string, sig: string): Promise<boolean> {
+  const expected = await signTrackingToken(secret, data);
+  return expected === sig;
+}
+
+// POST /internal/tracking-token — generate a signed tracking token (Service Binding only)
+app.post('/internal/tracking-token', async (c) => {
+  // Validate inter-service secret
+  const authHeader = c.req.header('Authorization');
+  const secret = c.env.INTER_SERVICE_SECRET;
+  if (!secret || !authHeader || authHeader !== `Bearer ${secret}`) {
+    return c.json({ error: 'Unauthorized' }, 401);
+  }
+
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'Invalid JSON' }, 400); }
+
+  const { orderId, tenantId, sourceModule } = body as Record<string, string>;
+  if (!orderId || !tenantId) return c.json({ error: 'orderId and tenantId are required' }, 400);
+
+  const trackingSecret = c.env.TRACKING_SECRET ?? c.env.INTER_SERVICE_SECRET ?? 'dev-tracking-secret';
+  const now = Math.floor(Date.now() / 1000);
+  const expiresAt = now + 7 * 24 * 60 * 60; // 7-day TTL
+
+  // Token payload: orderId:tenantId:expiresAt
+  const tokenData = `${orderId}:${tenantId}:${expiresAt}`;
+  const sig = await signTrackingToken(trackingSecret, tokenData);
+  const token = `${btoa(tokenData).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '')}.${sig}`;
+
+  // Persist token for lookup
+  try {
+    await c.env.DB.prepare(
+      'INSERT OR REPLACE INTO tracking_tokens (token, orderId, tenantId, sourceModule, expiresAt, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+    ).bind(token, orderId, tenantId, sourceModule ?? 'commerce', expiresAt, now).run();
+  } catch (err) {
+    log('WARN', 'TrackingToken', 'Failed to persist token', { err: String(err) });
+  }
+
+  const portalUrl = c.env.LOGISTICS_PORTAL_URL ?? 'https://logistics.webwaka.ng';
+  const trackingUrl = `${portalUrl}/track?token=${encodeURIComponent(token)}`;
+
+  log('INFO', 'TrackingToken', 'Token generated', { orderId, tenantId, expiresAt });
+  return c.json({ success: true, data: { token, trackingUrl, expiresAt } });
+});
+
+// GET /api/orders/track — public order tracking (accepts ?token= or ?order_id=&tenant_id=)
+app.get('/api/orders/track', async (c) => {
+  const tokenParam = c.req.query('token');
+  const orderIdParam = c.req.query('order_id');
+  const tenantIdParam = c.req.query('tenant_id');
+
+  let orderId: string | undefined;
+  let tenantId: string | undefined;
+
+  if (tokenParam) {
+    // Validate signed token
+    const trackingSecret = c.env.TRACKING_SECRET ?? c.env.INTER_SERVICE_SECRET ?? 'dev-tracking-secret';
+    const parts = tokenParam.split('.');
+    if (parts.length !== 2) return c.json({ success: false, error: 'Invalid tracking token' }, 400);
+
+    let tokenData: string;
+    try {
+      tokenData = atob(parts[0].replace(/-/g, '+').replace(/_/g, '/'));
+    } catch {
+      return c.json({ success: false, error: 'Malformed tracking token' }, 400);
+    }
+
+    const valid = await verifyTrackingToken(trackingSecret, tokenData, parts[1]);
+    if (!valid) return c.json({ success: false, error: 'Invalid or tampered tracking token' }, 401);
+
+    const [oid, tid, expiresAtStr] = tokenData.split(':');
+    const expiresAt = parseInt(expiresAtStr);
+    if (Date.now() / 1000 > expiresAt) return c.json({ success: false, error: 'Tracking token has expired' }, 401);
+
+    orderId = oid;
+    tenantId = tid;
+  } else if (orderIdParam && tenantIdParam) {
+    // Direct lookup (for internal/admin use — no token required)
+    orderId = orderIdParam;
+    tenantId = tenantIdParam;
+  } else {
+    return c.json({ success: false, error: 'Either token or order_id+tenant_id is required' }, 400);
+  }
+
+  try {
+    // Look up order tracking record
+    const tracking = await c.env.DB.prepare(
+      'SELECT * FROM order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
+    ).bind(orderId, tenantId).first() as Record<string, unknown> | null;
+
+    // Also look up the delivery request for provider/status details
+    const deliveryReq = await c.env.DB.prepare(
+      'SELECT status, assignedProvider, internalDeliveryId, updatedAt FROM delivery_requests WHERE orderId = ? LIMIT 1'
+    ).bind(orderId).first() as Record<string, unknown> | null;
+
+    if (!tracking && !deliveryReq) {
+      return c.json({ success: false, error: 'Order not found or not yet dispatched to logistics' }, 404);
+    }
+
+    const statusHistory = tracking?.statusHistory
+      ? JSON.parse(tracking.statusHistory as string)
+      : [];
+
+    return c.json({
+      success: true,
+      data: {
+        orderId,
+        tenantId,
+        status: tracking?.status ?? deliveryReq?.status ?? 'PENDING',
+        provider: tracking?.provider ?? deliveryReq?.assignedProvider ?? null,
+        trackingUrl: tracking?.trackingUrl ?? null,
+        estimatedDelivery: tracking?.estimatedDelivery ?? null,
+        notes: tracking?.notes ?? null,
+        statusHistory,
+        lastUpdated: tracking?.updatedAt ?? deliveryReq?.updatedAt ?? null,
+      },
+    });
+  } catch (err) {
+    log('ERROR', 'OrderTracking', 'GET /api/orders/track failed', { err: String(err) });
+    return c.json({ success: false, error: 'Tracking lookup failed' }, 500);
+  }
+});
+
+// ============================================================
 // Commerce Event Inbound (P04)
 // POST /api/events/commerce
 // Consumes the unified WebWakaEvent<T> schema (event, tenantId, payload, timestamp)
@@ -1059,6 +1234,50 @@ app.post('/api/events/commerce', async (c) => {
 
     log('INFO', 'CommerceEvents', 'Delivery request created and quote published', { orderId, quoteCount: quotes.length });
     return c.json({ success: true });
+  }
+
+  // T-CVC-02: Consume delivery.status_changed events to update order_tracking table
+  if (eventType === 'delivery.status_changed') {
+    if (!payload) return c.json({ success: false, error: 'Payload is required' }, 400);
+    const { orderId, tenantId, status, provider, trackingUrl, estimatedDelivery, notes } = payload as Record<string, string>;
+    if (!orderId || !tenantId || !status) {
+      return c.json({ success: false, error: 'orderId, tenantId, and status are required' }, 400);
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    try {
+      // Fetch existing record to append to statusHistory
+      const existing = await c.env.DB.prepare(
+        'SELECT statusHistory FROM order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
+      ).bind(orderId, tenantId).first() as Record<string, unknown> | null;
+
+      const history: Array<{ status: string; timestamp: number; provider?: string; notes?: string }> =
+        existing?.statusHistory ? JSON.parse(existing.statusHistory as string) : [];
+      history.push({ status, timestamp: now, ...(provider ? { provider } : {}), ...(notes ? { notes } : {}) });
+
+      await c.env.DB.prepare(`
+        INSERT INTO order_tracking (orderId, tenantId, sourceModule, status, provider, trackingUrl, estimatedDelivery, notes, statusHistory, createdAt, updatedAt)
+        VALUES (?, ?, 'commerce', ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(orderId, tenantId) DO UPDATE SET
+          status = excluded.status,
+          provider = COALESCE(excluded.provider, provider),
+          trackingUrl = COALESCE(excluded.trackingUrl, trackingUrl),
+          estimatedDelivery = COALESCE(excluded.estimatedDelivery, estimatedDelivery),
+          notes = COALESCE(excluded.notes, notes),
+          statusHistory = excluded.statusHistory,
+          updatedAt = excluded.updatedAt
+      `).bind(
+        orderId, tenantId, status,
+        provider ?? null, trackingUrl ?? null, estimatedDelivery ?? null, notes ?? null,
+        JSON.stringify(history), now, now,
+      ).run();
+
+      log('INFO', 'CommerceEvents', 'order_tracking updated via delivery.status_changed', { orderId, status });
+      return c.json({ success: true });
+    } catch (err) {
+      log('ERROR', 'CommerceEvents', 'Failed to update order_tracking', { err: String(err) });
+      return c.json({ success: false, error: 'Failed to update tracking record' }, 500);
+    }
   }
 
   log('INFO', 'CommerceEvents', `Unhandled event type: ${eventType}`);
@@ -1179,4 +1398,5 @@ app.post('/internal/transport-events', async (c) => {
 // ============================================================
 // Export
 // ============================================================
+export { app };  // Named export for Vitest integration tests (T-CVC-02)
 export default app;

@@ -5,6 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ENVIRONMENT = "production"
+LOGISTICS_PORTAL_URL = "https://logistics.webwaka.ng"
 
 [[d1_databases]]
 binding = "DB"
@@ -33,6 +34,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [env.production.vars]
 ENVIRONMENT = "production"
+LOGISTICS_PORTAL_URL = "https://logistics.webwaka.ng"
 
 [[env.production.d1_databases]]
 binding = "DB"
