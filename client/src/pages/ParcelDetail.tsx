@@ -526,27 +526,34 @@ export default function ParcelDetail() {
           </Dialog>
         )}
 
-        {/* L-06: POD button — only enabled after OTP verified */}
-        {canSubmitPOD && (
+        {/* L-06: POD button — only opens POD dialog after OTP is verified.
+             When OTP not yet verified: plain button that opens the OTP dialog instead.
+             Must NOT be wrapped in DialogTrigger when unverified — that would open
+             the POD dialog (with no content) simultaneously with the OTP dialog. */}
+        {canSubmitPOD && !otpVerified && (
+          <Button
+            size="sm"
+            className="gap-2"
+            onClick={() => setOtpOpen(true)}
+            data-testid="button-submit-pod"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {t.submitPOD}
+          </Button>
+        )}
+        {canSubmitPOD && otpVerified && (
           <Dialog open={podOpen} onOpenChange={setPodOpen}>
             <DialogTrigger asChild>
               <Button
                 size="sm"
                 className="gap-2"
-                disabled={!otpVerified && !isOutForDelivery}
-                onClick={() => {
-                  if (!otpVerified) {
-                    setOtpOpen(true);
-                  }
-                }}
                 data-testid="button-submit-pod"
               >
                 <CheckCircle2 className="h-4 w-4" />
                 {t.submitPOD}
               </Button>
             </DialogTrigger>
-            {otpVerified && (
-              <DialogContent>
+            <DialogContent>
                 <DialogHeader>
                   <DialogTitle>{t.proofOfDelivery}</DialogTitle>
                 </DialogHeader>
@@ -616,7 +623,6 @@ export default function ParcelDetail() {
                   </Button>
                 </div>
               </DialogContent>
-            )}
           </Dialog>
         )}
       </div>

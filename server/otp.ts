@@ -4,7 +4,7 @@
  * Uses @webwaka/core Termii provider for SMS dispatch.
  */
 
-import { createHash, createHmac, timingSafeEqual } from "crypto";
+import { createHash, createHmac, timingSafeEqual, randomInt } from "crypto";
 import { sendTermiiSms } from "@webwaka/core";
 import { ENV } from "./_core/env";
 import { createLogger } from "./logger";
@@ -22,11 +22,12 @@ const OFFLINE_HMAC_KEY = process.env.OTP_OFFLINE_SECRET ?? "webwaka-logistics-of
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Generate a cryptographically random 4-digit OTP.
+ * Generate a cryptographically random 4-digit OTP using Node.js crypto.randomInt.
+ * Range: 1000–9999 (inclusive) — always 4 digits, no leading zeros.
+ * crypto.randomInt is CSPRNG-backed: suitable for security-sensitive one-time codes.
  */
 export function generateOtp(): string {
-  const value = Math.floor(1000 + Math.random() * 9000);
-  return String(value);
+  return String(randomInt(1000, 10000));
 }
 
 /**
