@@ -106,6 +106,8 @@ export default function ParcelDetail() {
   const [podRelation, setPodRelation] = useState("Self");
   /** T-LOG-02: Captured, watermarked photo from CameraPOD */
   const [podCapturedPhoto, setPodCapturedPhoto] = useState<CameraPODResult | null>(null);
+  /** Minor #5 fix: guard against double-submit during async blob-to-base64 work */
+  const [podIsSubmitting, setPodIsSubmitting] = useState(false);
 
   const { data, isLoading, error } = trpc.parcels.getByTracking.useQuery(
     { tenantId, trackingNumber: trackingNumber ?? "" },
@@ -196,49 +198,64 @@ export default function ParcelDetail() {
    * Offline: save blob to Dexie, queue mutation (photo synced separately by worker).
    */
   const handleSubmitPOD = async () => {
-    if (!podName || !data?.data?.parcel) return;
+    // Minor #5 fix: guard against double-tap during async blob processing
+    if (podIsSubmitting || podMutation.isPending || !podName || !data?.data?.parcel) return;
     const parcel = data.data.parcel;
 
-    let imageBase64: string | undefined;
+    setPodIsSubmitting(true);
+    try {
+      let imageBase64: string | undefined;
 
-    if (podCapturedPhoto) {
-      // Save photo to Dexie for offline resilience (always — not just when offline)
-      await savePodPhotoLocally({
-        tenantId,
-        parcelId: parcel.id,
-        trackingNumber: parcel.trackingNumber,
-        photoBlob: podCapturedPhoto.blob,
-        lat: podCapturedPhoto.geo?.lat ?? null,
-        lng: podCapturedPhoto.geo?.lng ?? null,
-        capturedAt: podCapturedPhoto.capturedAt.getTime(),
-        synced: false,
-      });
+      if (podCapturedPhoto) {
+        // Save photo blob to Dexie for offline resilience (always, not just offline)
+        await savePodPhotoLocally({
+          tenantId,
+          parcelId: parcel.id,
+          trackingNumber: parcel.trackingNumber,
+          photoBlob: podCapturedPhoto.blob,
+          lat: podCapturedPhoto.geo?.lat ?? null,
+          lng: podCapturedPhoto.geo?.lng ?? null,
+          capturedAt: podCapturedPhoto.capturedAt.getTime(),
+          synced: false,
+        });
 
-      // Convert blob to base64 for the API payload
-      imageBase64 = await blobToBase64(podCapturedPhoto.blob);
-    }
+        // Convert blob to base64 for the API payload
+        imageBase64 = await blobToBase64(podCapturedPhoto.blob);
+      }
 
-    if (isOnline) {
-      podMutation.mutate({
-        tenantId,
-        parcelId: parcel.id,
-        receivedByName: podName,
-        receivedByRelation: podRelation,
-        imageBase64,
-      });
-    } else {
-      // Offline: queue the full mutation (including base64 so it can be replayed)
-      await enqueueMutation("parcels.submitPOD", {
-        tenantId,
-        parcelId: parcel.id,
-        receivedByName: podName,
-        receivedByRelation: podRelation,
-        imageBase64,
-      });
-      toast.success("Delivery recorded offline. Will sync when connected.");
-      setPodOpen(false);
-      setOtpOpen(false);
-      setPodCapturedPhoto(null);
+      if (isOnline) {
+        // Online: call tRPC directly — mutation's onSuccess handles cleanup
+        podMutation.mutate({
+          tenantId,
+          parcelId: parcel.id,
+          receivedByName: podName,
+          receivedByRelation: podRelation,
+          imageBase64,
+        });
+        // Note: setPodIsSubmitting(false) happens in finally below;
+        // but podMutation.isPending keeps the button disabled until the call resolves.
+      } else {
+        // Offline: queue the full mutation payload for replay on reconnect.
+        // The sync engine's "parcels.submitPOD" handler (registered in App.tsx) will
+        // replay it via trpcVanilla when connectivity is restored.
+        await enqueueMutation("parcels.submitPOD", {
+          tenantId,
+          parcelId: parcel.id,
+          receivedByName: podName,
+          receivedByRelation: podRelation,
+          imageBase64,
+        });
+        toast.success("Delivery recorded offline. Will sync when connected.");
+        setPodOpen(false);
+        setOtpOpen(false);
+        setPodCapturedPhoto(null);
+        setPodName("");
+        setPodRelation("Self");
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to submit POD");
+    } finally {
+      setPodIsSubmitting(false);
     }
   };
 
@@ -689,11 +706,11 @@ export default function ParcelDetail() {
                   </div>
                   <Button
                     className="w-full"
-                    disabled={!podName || podMutation.isPending}
+                    disabled={!podName || podMutation.isPending || podIsSubmitting}
                     onClick={handleSubmitPOD}
                     data-testid="button-confirm-pod"
                   >
-                    {podMutation.isPending ? t.loading : t.submitPOD}
+                    {(podMutation.isPending || podIsSubmitting) ? t.loading : t.submitPOD}
                   </Button>
                 </div>
               </DialogContent>

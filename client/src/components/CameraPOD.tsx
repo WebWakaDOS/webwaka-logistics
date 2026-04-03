@@ -69,6 +69,12 @@ export function CameraPOD({ trackingNumber, onPhoto, onCancel }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fallbackInputRef = useRef<HTMLInputElement>(null);
+  /**
+   * Bug #4 fix: generation counter — incremented on every startCamera() call.
+   * Any stale geo promise callback checks its captured generation against the current
+   * value and discards the result if the user has already hit Retake.
+   */
+  const geoGenRef = useRef(0);
 
   // ── Start the camera on mount ──────────────────────────────────────────────
   useEffect(() => {
@@ -84,12 +90,17 @@ export function CameraPOD({ trackingNumber, onPhoto, onCancel }: Props) {
   }
 
   const startCamera = useCallback(async () => {
+    // Bug #4 fix: capture this invocation's generation token
+    const myGen = ++geoGenRef.current;
+
     setCameraState("requesting-geo");
 
     // Kick off geo request in parallel with camera open
     const geoPromise = captureGeoLocation();
     setPendingGeo(geoPromise);
     geoPromise.then(pos => {
+      // Discard stale result if the user already hit Retake
+      if (geoGenRef.current !== myGen) return;
       setGeo(pos);
       setGeoStatus(pos ? "acquired" : "denied");
     });
@@ -101,6 +112,11 @@ export function CameraPOD({ trackingNumber, onPhoto, onCancel }: Props) {
 
     try {
       const stream = await openRearCamera();
+      // If a retake happened while waiting for the stream, stop this stale stream
+      if (geoGenRef.current !== myGen) {
+        stream.getTracks().forEach(t => t.stop());
+        return;
+      }
       streamRef.current = stream;
       setCameraState("streaming");
 
@@ -112,9 +128,20 @@ export function CameraPOD({ trackingNumber, onPhoto, onCancel }: Props) {
         }
       });
     } catch (err) {
+      // Bug #3 fix: DOMException.name is the authoritative check — string matching is fallback
+      const name = err instanceof DOMException ? err.name : "";
       const msg = err instanceof Error ? err.message : String(err);
-      if (msg.includes("Permission") || msg.includes("denied") || msg.includes("NotAllowed")) {
-        // Camera permission denied — fall back to file input
+      const isCameraUnavailable =
+        name === "NotAllowedError" ||
+        name === "PermissionDeniedError" ||
+        name === "NotFoundError" ||      // No camera hardware
+        name === "DevicesNotFoundError" || // Legacy alias
+        msg.includes("Permission") ||
+        msg.includes("denied") ||
+        msg.includes("NotAllowed");
+
+      if (isCameraUnavailable) {
+        // Permission denied or no camera — fall back to file input
         setCameraState("fallback");
       } else {
         setErrorMsg("Could not access camera. Please allow camera access in your browser settings.");

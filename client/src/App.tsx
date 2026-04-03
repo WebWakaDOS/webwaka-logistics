@@ -18,7 +18,9 @@ import CreateParcel from "./pages/CreateParcel";
 import ParcelDetail from "./pages/ParcelDetail";
 import PublicTracking from "./pages/PublicTracking";
 import { useEffect } from "react";
-import { initSyncEngine } from "./lib/syncEngine";
+import { initSyncEngine, registerSyncHandler } from "./lib/syncEngine";
+import { initPodPhotoSync } from "./lib/podPhotoSyncWorker";
+import { trpcVanilla } from "./lib/trpcVanilla";
 import { useAuth } from "./_core/hooks/useAuth";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,11 +69,45 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sync Engine Initialiser
+// Registers mutation handlers and starts background sync workers.
 // ─────────────────────────────────────────────────────────────────────────────
 function SyncEngineInit() {
   useEffect(() => {
-    const cleanup = initSyncEngine();
-    return cleanup;
+    // ── Register offline mutation replay handlers ──────────────────────────
+    // parcels.submitPOD: replay full POD submission (including base64 photo)
+    // when connectivity is restored after an offline delivery.
+    registerSyncHandler("parcels.submitPOD", async (item) => {
+      try {
+        const payload = JSON.parse(item.payload);
+        const result = await trpcVanilla.parcels.submitPOD.mutate(payload);
+        return { success: result.success };
+      } catch {
+        return { success: false };
+      }
+    });
+
+    // parcels.verifyOtp: replay offline OTP verifications queued while disconnected.
+    registerSyncHandler("parcels.verifyOtp", async (item) => {
+      try {
+        const payload = JSON.parse(item.payload);
+        const result = await trpcVanilla.parcels.verifyOtp.mutate(payload);
+        return { success: result.success };
+      } catch {
+        return { success: false };
+      }
+    });
+
+    // ── Start background sync workers ─────────────────────────────────────
+    // T-LOG-02: upload watermarked photo blobs cached in Dexie to R2.
+    const cleanupPodSync = initPodPhotoSync(trpcVanilla);
+
+    // Core mutation queue sync engine.
+    const cleanupSyncEngine = initSyncEngine();
+
+    return () => {
+      cleanupPodSync();
+      cleanupSyncEngine();
+    };
   }, []);
   return null;
 }
