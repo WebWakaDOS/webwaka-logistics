@@ -18,6 +18,7 @@ export type InsertUser = typeof users.$inferInsert;
 export const PARCEL_STATUS = [
   "PENDING",
   "COLLECTED",
+  "IN_WAREHOUSE",
   "IN_TRANSIT",
   "OUT_FOR_DELIVERY",
   "DELIVERED",

@@ -63,6 +63,7 @@
     "express": "^4.22.1",
     "framer-motion": "^12.38.0",
     "hono": "^4.12.10",
+    "html5-qrcode": "^2.3.8",
     "input-otp": "^1.4.2",
     "jose": "^6.1.0",
     "lucide-react": "^0.453.0",

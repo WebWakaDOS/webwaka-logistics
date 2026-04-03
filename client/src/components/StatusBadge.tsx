@@ -13,6 +13,7 @@ export type ParcelStatus = (typeof PARCEL_STATUS)[number];
 const STATUS_STYLES: Record<ParcelStatus, string> = {
   PENDING: "bg-yellow-100 text-yellow-800 border-yellow-200",
   COLLECTED: "bg-blue-100 text-blue-800 border-blue-200",
+  IN_WAREHOUSE: "bg-cyan-100 text-cyan-800 border-cyan-200",
   IN_TRANSIT: "bg-indigo-100 text-indigo-800 border-indigo-200",
   OUT_FOR_DELIVERY: "bg-purple-100 text-purple-800 border-purple-200",
   DELIVERED: "bg-green-100 text-green-800 border-green-200",
@@ -23,6 +24,7 @@ const STATUS_STYLES: Record<ParcelStatus, string> = {
 const STATUS_DOTS: Record<ParcelStatus, string> = {
   PENDING: "bg-yellow-500",
   COLLECTED: "bg-blue-500",
+  IN_WAREHOUSE: "bg-cyan-500",
   IN_TRANSIT: "bg-indigo-500",
   OUT_FOR_DELIVERY: "bg-purple-500",
   DELIVERED: "bg-green-500",
@@ -40,6 +42,7 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
   const statusLabels: Record<ParcelStatus, string> = {
     PENDING: t.PENDING,
     COLLECTED: t.COLLECTED,
+    IN_WAREHOUSE: "In Warehouse",
     IN_TRANSIT: t.IN_TRANSIT,
     OUT_FOR_DELIVERY: t.OUT_FOR_DELIVERY,
     DELIVERED: t.DELIVERED,

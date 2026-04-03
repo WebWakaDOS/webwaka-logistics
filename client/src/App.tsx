@@ -18,9 +18,11 @@ import CreateParcel from "./pages/CreateParcel";
 import ParcelDetail from "./pages/ParcelDetail";
 import PublicTracking from "./pages/PublicTracking";
 import Dispatch from "./pages/Dispatch";
+import ReceivingScanner from "./pages/ReceivingScanner";
 import { useEffect } from "react";
 import { initSyncEngine, registerSyncHandler } from "./lib/syncEngine";
 import { initPodPhotoSync } from "./lib/podPhotoSyncWorker";
+import { initInboundScanSync } from "./lib/inboundScanSync";
 import { trpcVanilla } from "./lib/trpcVanilla";
 import { useAuth } from "./_core/hooks/useAuth";
 
@@ -102,11 +104,15 @@ function SyncEngineInit() {
     // T-LOG-02: upload watermarked photo blobs cached in Dexie to R2.
     const cleanupPodSync = initPodPhotoSync(trpcVanilla);
 
+    // T-LOG-04: flush offline barcode scans to warehouse.bulkReceiveScans.
+    const cleanupInboundSync = initInboundScanSync(trpcVanilla);
+
     // Core mutation queue sync engine.
     const cleanupSyncEngine = initSyncEngine();
 
     return () => {
       cleanupPodSync();
+      cleanupInboundSync();
       cleanupSyncEngine();
     };
   }, []);
@@ -155,6 +161,13 @@ function Router() {
         {() => (
           <AuthenticatedLayout>
             <Dispatch />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/receiving">
+        {() => (
+          <AuthenticatedLayout>
+            <ReceivingScanner />
           </AuthenticatedLayout>
         )}
       </Route>

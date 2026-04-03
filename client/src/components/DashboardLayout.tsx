@@ -21,19 +21,20 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, Package, Plus, Search, PanelLeft, Truck } from "lucide-react";
+import { LayoutDashboard, LogOut, Package, Plus, Search, PanelLeft, Truck, ScanBarcode } from "lucide-react";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
-/** LOG-2 + T-LOG-03 Logistics navigation items */
+/** LOG-2 + T-LOG-03 + T-LOG-04 Logistics navigation items */
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Package, label: "Parcels", path: "/parcels" },
   { icon: Plus, label: "New Parcel", path: "/parcels/new" },
   { icon: Truck, label: "Dispatch", path: "/dispatch" },
+  { icon: ScanBarcode, label: "Receiving", path: "/receiving" },
   { icon: Search, label: "Track", path: "/track" },
 ];
 

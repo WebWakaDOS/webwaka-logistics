@@ -115,6 +115,29 @@ export interface PodPhotoRecord {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// T-LOG-04: Inbound Receiving Scanner Queue
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One scanned barcode entry from the warehouse receiving scanner.
+ * Saved to Dexie immediately (offline-first) and flushed to the server
+ * in bulk when connectivity is restored.
+ */
+export interface InboundScan {
+  /** Local IndexedDB auto-increment key */
+  localId?: number;
+  tenantId: string;
+  /** Scanned tracking number string */
+  trackingNumber: string;
+  /** Unix timestamp of scan */
+  scannedAt: number;
+  /** True once the server has acknowledged this scan */
+  synced: boolean;
+  /** Server-side result filled in after sync */
+  result?: "received" | "not_found" | "already_received" | "error";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Dexie Database Definition
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -123,6 +146,7 @@ class WebWakaLogisticsDB extends Dexie {
   mutationQueue!: Table<MutationQueueItem, number>;
   otpCache!: Table<OfflineOtpCache, number>;
   podPhotos!: Table<PodPhotoRecord, number>;
+  pendingInboundScans!: Table<InboundScan, number>;
 
   constructor() {
     super("webwaka-logistics-v1");
@@ -147,6 +171,15 @@ class WebWakaLogisticsDB extends Dexie {
       otpCache: "++localId, parcelId, expiresAt",
       /** T-LOG-02: Offline POD photo cache — watermarked blobs stored locally */
       podPhotos: "++localId, parcelId, tenantId, synced, capturedAt",
+    });
+
+    this.version(4).stores({
+      parcels: "++localId, clientId, tenantId, synced, status",
+      mutationQueue: "++localId, type, synced, createdAt",
+      otpCache: "++localId, parcelId, expiresAt",
+      podPhotos: "++localId, parcelId, tenantId, synced, capturedAt",
+      /** T-LOG-04: Offline inbound receiving scanner queue */
+      pendingInboundScans: "++localId, tenantId, trackingNumber, synced, scannedAt, [tenantId+trackingNumber]",
     });
   }
 }
@@ -306,4 +339,91 @@ export async function markPodPhotoSynced(localId: number, imageUrl: string): Pro
  */
 export async function deletePodPhoto(localId: number): Promise<void> {
   await offlineDb.podPhotos.delete(localId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T-LOG-04: Inbound Receiving Scanner Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Save a scanned tracking number to Dexie immediately (offline-first).
+ * Returns the local auto-increment ID.
+ */
+export async function saveInboundScan(
+  scan: Omit<InboundScan, "localId">,
+): Promise<number> {
+  return offlineDb.pendingInboundScans.add(scan);
+}
+
+/**
+ * Retrieve all unsynced inbound scans for a specific tenant.
+ * Used by the background sync worker to batch-flush to the server.
+ */
+export async function getPendingInboundScans(tenantId: string): Promise<InboundScan[]> {
+  return offlineDb.pendingInboundScans
+    .where("synced")
+    .equals(0)
+    .and(s => s.tenantId === tenantId)
+    .toArray();
+}
+
+/**
+ * Retrieve all inbound scans (synced and unsynced) for a tenant,
+ * sorted newest-first. Used by the scanner UI to show the session log.
+ */
+export async function getRecentInboundScans(
+  tenantId: string,
+  limit = 50,
+): Promise<InboundScan[]> {
+  const all = await offlineDb.pendingInboundScans
+    .where("tenantId")
+    .equals(tenantId)
+    .reverse()
+    .sortBy("scannedAt");
+  return all.slice(0, limit);
+}
+
+/**
+ * Mark an inbound scan as synced and record the server's result.
+ */
+export async function markInboundScanSynced(
+  localId: number,
+  result: InboundScan["result"],
+): Promise<void> {
+  await offlineDb.pendingInboundScans.update(localId, { synced: true, result });
+}
+
+/**
+ * Count all unsynced inbound scans across all tenants.
+ * Used by the UI sync-status badge.
+ */
+export async function countPendingInboundScans(): Promise<number> {
+  return offlineDb.pendingInboundScans.where("synced").equals(0).count();
+}
+
+/**
+ * Check if a tracking number has already been saved (unsynced) for this tenant.
+ * Used for session-level deduplication in the scanner UI.
+ */
+export async function hasPendingInboundScan(
+  tenantId: string,
+  trackingNumber: string,
+): Promise<boolean> {
+  const count = await offlineDb.pendingInboundScans
+    .where("[tenantId+trackingNumber]")
+    .equals([tenantId, trackingNumber])
+    .count();
+  return count > 0;
+}
+
+/**
+ * Wipe synced inbound scans older than the given cutoff (milliseconds since epoch).
+ * Call periodically to keep the local store lean.
+ */
+export async function pruneOldInboundScans(olderThanMs: number): Promise<void> {
+  await offlineDb.pendingInboundScans
+    .where("scannedAt")
+    .below(olderThanMs)
+    .and(s => s.synced)
+    .delete();
 }

@@ -543,7 +543,7 @@ export default function ParcelDetail() {
                     <SelectContent>
                       {PARCEL_STATUS.map(s => (
                         <SelectItem key={s} value={s}>
-                          {t[s]}
+                          {s === "IN_WAREHOUSE" ? "In Warehouse" : (t as Record<string, string>)[s] ?? s}
                         </SelectItem>
                       ))}
                     </SelectContent>

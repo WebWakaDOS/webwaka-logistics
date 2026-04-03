@@ -61,6 +61,19 @@ drizzle/         Database schema and migrations
 - **27 unit tests** in `server/__tests__/photoPod.test.ts` covering: timestamp formatting, GPS watermark formatting, image key generation, sync worker lifecycle, edge cases.
 - **Key files**: `client/src/lib/photoPod.ts`, `client/src/lib/podPhotoSyncWorker.ts`, `client/src/components/CameraPOD.tsx`
 
+### T-LOG-04: Offline-First Warehouse Receiving Scanner
+
+- **`IN_WAREHOUSE` status** added to `PARCEL_STATUS` enum and drizzle schema.
+- **Dexie v4** — `pendingInboundScans` table with compound index `[tenantId+trackingNumber]`; helpers: `saveInboundScan`, `getPendingInboundScans`, `getRecentInboundScans`, `markInboundScanSynced`, `countPendingInboundScans`, `hasPendingInboundScan`, `pruneOldInboundScans`.
+- **`inboundScanSync.ts`** — background sync worker. Groups pending scans by tenant, de-duplicates tracking numbers within a batch, calls `warehouse.bulkReceiveScans` once per tenant per flush cycle, marks each scan with its server result (`received`/`already_received`/`not_found`). Triggers on `online` event and at app startup.
+- **`ReceivingScanner.tsx`** — PWA barcode scanner page at `/receiving`. Uses `html5-qrcode` with `Html5Qrcode` API (rear camera, 12fps, QR+CODE128+CODE39+EAN13+ITF+DataMatrix). 3-second debounce per tracking number. Web Audio API success/error beep. Green flash overlay on scan. Manual entry fallback. Session log with sync status badges. Online/offline indicator.
+- **`server/routers/warehouse.ts`** — `bulkReceiveScans` (idempotent, tenant-scoped, classifies each tracking number as `received`/`already_received`/`not_found`) and `receivedToday` tRPC endpoints.
+- **`StatusBadge.tsx`** updated with cyan colour for `IN_WAREHOUSE` status.
+- **Route** `/receiving` added to App.tsx Router. `initInboundScanSync` called in `SyncEngineInit` with cleanup.
+- **Sidebar** — `Receiving` nav item added to `DashboardLayout.tsx` menu.
+- **20 unit tests** in `server/__tests__/inboundScan.test.ts` covering: `groupScansByTenant`, `resolveResultPerScan`, deduplication logic, mock client contract.
+- **Key files**: `client/src/lib/offlineDb.ts`, `client/src/lib/inboundScanSync.ts`, `client/src/pages/ReceivingScanner.tsx`, `server/routers/warehouse.ts`
+
 ### L-06: Secure OTP Verification for Proof of Delivery
 - When a rider marks a parcel `OUT_FOR_DELIVERY`, a 4-digit OTP is auto-generated, SHA-256 hashed (stored in DB), and sent to the recipient's phone via the `@webwaka/core` Termii provider
 - The rider's PWA receives a pre-computed 12-char HMAC offline token, cached in Dexie IndexedDB
