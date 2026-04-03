@@ -85,6 +85,36 @@ export interface OfflineOtpCache {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// T-LOG-02: Offline POD Photo Store
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A watermarked POD photo cached locally while the rider is offline.
+ * The blob is the Canvas-watermarked JPEG (timestamp + GPS + tracking number
+ * already burned in). When connectivity returns, the sync worker uploads the blob
+ * to R2 via storagePut and records the URL in the DB.
+ */
+export interface PodPhotoRecord {
+  /** Local IndexedDB auto-increment key */
+  localId?: number;
+  tenantId: string;
+  parcelId: number;
+  trackingNumber: string;
+  /** Watermarked JPEG blob — gallery uploads are rejected before this point */
+  photoBlob: Blob;
+  /** GPS latitude at capture time (null if denied) */
+  lat: number | null;
+  /** GPS longitude at capture time (null if denied) */
+  lng: number | null;
+  /** Unix timestamp of capture */
+  capturedAt: number;
+  /** True once the photo has been successfully uploaded and the POD record updated */
+  synced: boolean;
+  /** R2 URL filled in after successful upload */
+  imageUrl?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Dexie Database Definition
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -92,6 +122,7 @@ class WebWakaLogisticsDB extends Dexie {
   parcels!: Table<OfflineParcel, number>;
   mutationQueue!: Table<MutationQueueItem, number>;
   otpCache!: Table<OfflineOtpCache, number>;
+  podPhotos!: Table<PodPhotoRecord, number>;
 
   constructor() {
     super("webwaka-logistics-v1");
@@ -108,6 +139,14 @@ class WebWakaLogisticsDB extends Dexie {
       mutationQueue: "++localId, type, synced, createdAt",
       /** L-06: Offline OTP cache — keyed by parcelId for fast lookup */
       otpCache: "++localId, parcelId, expiresAt",
+    });
+
+    this.version(3).stores({
+      parcels: "++localId, clientId, tenantId, synced, status",
+      mutationQueue: "++localId, type, synced, createdAt",
+      otpCache: "++localId, parcelId, expiresAt",
+      /** T-LOG-02: Offline POD photo cache — watermarked blobs stored locally */
+      podPhotos: "++localId, parcelId, tenantId, synced, capturedAt",
     });
   }
 }
@@ -223,4 +262,48 @@ export async function verifyOtpOffline(
 export async function pruneExpiredOtpCache(): Promise<void> {
   const now = Date.now();
   await offlineDb.otpCache.where("expiresAt").below(now).delete();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// T-LOG-02: POD Photo Store Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Save a watermarked POD photo blob to Dexie for offline-first caching.
+ * Returns the local Dexie auto-increment ID for later retrieval.
+ */
+export async function savePodPhotoLocally(
+  record: Omit<PodPhotoRecord, "localId">,
+): Promise<number> {
+  return offlineDb.podPhotos.add(record);
+}
+
+/**
+ * Get all unsynced (pending upload) POD photos.
+ * Used by the background sync worker to drain the queue when online.
+ */
+export async function getPendingPodPhotos(): Promise<PodPhotoRecord[]> {
+  return offlineDb.podPhotos.where("synced").equals(0).toArray();
+}
+
+/**
+ * Get all POD photos for a specific parcel (for display on detail page).
+ */
+export async function getPodPhotosForParcel(parcelId: number): Promise<PodPhotoRecord[]> {
+  return offlineDb.podPhotos.where("parcelId").equals(parcelId).toArray();
+}
+
+/**
+ * Mark a POD photo as synced and store the resulting R2 image URL.
+ */
+export async function markPodPhotoSynced(localId: number, imageUrl: string): Promise<void> {
+  await offlineDb.podPhotos.update(localId, { synced: true, imageUrl });
+}
+
+/**
+ * Delete a POD photo from local storage (after confirmed successful upload).
+ * Only call after `markPodPhotoSynced` — blob can be large, clean up promptly.
+ */
+export async function deletePodPhoto(localId: number): Promise<void> {
+  await offlineDb.podPhotos.delete(localId);
 }

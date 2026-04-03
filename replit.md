@@ -40,7 +40,26 @@ drizzle/         Database schema and migrations
 - `TERMII_API_KEY` — Termii SMS provider API key (L-06: required for OTP delivery)
 - `OTP_OFFLINE_SECRET` — HMAC secret for offline OTP tokens (L-06, defaults to built-in fallback)
 
+## Offline Database (Dexie IndexedDB)
+
+| Version | Tables Added |
+|---------|-------------|
+| v1 | `parcels`, `mutationQueue` |
+| v2 | `otpCache` |
+| v3 | `podPhotos` (T-LOG-02) |
+
 ## Implemented Features
+
+### T-LOG-02: Tamper-Evident Photo Capture for POD
+
+- **Live camera only** — gallery uploads are blocked. Primary path: `getUserMedia()` opens the rear camera in-browser with no file picker. Fallback: `<input type="file" capture="environment">` (mobile OS enforces camera).
+- **Canvas watermarking** — every captured frame has a semi-transparent bar burned in with: WAT timestamp, GPS coordinates (lat/lng/accuracy), and parcel tracking number. No external library — HTML5 Canvas 2D only.
+- **Geo-tagged** — `captureGeoLocation()` uses the browser Geolocation API with 8s timeout. GPS is best-effort; photo is still accepted if denied (watermark shows "GPS unavailable").
+- **Offline-first** — captured blobs are saved to Dexie v3 `podPhotos` table immediately. When connectivity returns, the `podPhotoSyncWorker` drains the queue, converts blobs to base64, and uploads via `parcels.uploadPodPhoto` tRPC procedure → R2 storage.
+- **`CameraPOD` component** (`client/src/components/CameraPOD.tsx`) — states: streaming → capturing → preview → confirmed or fallback. Viewfinder guide overlay, GPS status chip, retake flow.
+- **Server endpoint** — `parcels.uploadPodPhoto` tRPC procedure uploads JPEG to R2 via `storagePut`, and if a POD record already exists without an image, it back-fills the `imageUrl`.
+- **27 unit tests** in `server/__tests__/photoPod.test.ts` covering: timestamp formatting, GPS watermark formatting, image key generation, sync worker lifecycle, edge cases.
+- **Key files**: `client/src/lib/photoPod.ts`, `client/src/lib/podPhotoSyncWorker.ts`, `client/src/components/CameraPOD.tsx`
 
 ### L-06: Secure OTP Verification for Proof of Delivery
 - When a rider marks a parcel `OUT_FOR_DELIVERY`, a 4-digit OTP is auto-generated, SHA-256 hashed (stored in DB), and sent to the recipient's phone via the `@webwaka/core` Termii provider

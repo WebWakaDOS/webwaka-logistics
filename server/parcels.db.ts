@@ -262,6 +262,23 @@ export async function getProofOfDelivery(tenantId: string, parcelId: number) {
   return result[0] ?? null;
 }
 
+/**
+ * T-LOG-02: Update the image URL on an existing POD record.
+ * Called by uploadPodPhoto when the photo is uploaded after the POD was already created.
+ */
+export async function updatePodImageUrl(
+  podId: number,
+  imageUrl: string,
+  imageKey: string,
+): Promise<void> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+  db.update(proofOfDelivery)
+    .set({ imageUrl, imageKey })
+    .where(eq(proofOfDelivery.id, podId))
+    .run();
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // L-06: OTP Verification Helpers
 // ─────────────────────────────────────────────────────────────────────────────

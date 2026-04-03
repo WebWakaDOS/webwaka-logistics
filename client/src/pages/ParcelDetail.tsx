@@ -22,6 +22,7 @@ import {
   RefreshCw,
   WifiOff,
   KeyRound,
+  RotateCcw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -58,7 +59,10 @@ import {
   getCachedOtpToken,
   verifyOtpOffline,
   enqueueMutation,
+  savePodPhotoLocally,
 } from "@/lib/offlineDb";
+import { blobToBase64 } from "@/lib/photoPod";
+import { CameraPOD, type CameraPODResult } from "@/components/CameraPOD";
 import { PARCEL_STATUS } from "@shared/types";
 import type { ParcelStatus } from "@/components/StatusBadge";
 
@@ -100,7 +104,8 @@ export default function ParcelDetail() {
   const [podOpen, setPodOpen] = useState(false);
   const [podName, setPodName] = useState("");
   const [podRelation, setPodRelation] = useState("Self");
-  const [podPhoto, setPodPhoto] = useState<string | undefined>();
+  /** T-LOG-02: Captured, watermarked photo from CameraPOD */
+  const [podCapturedPhoto, setPodCapturedPhoto] = useState<CameraPODResult | null>(null);
 
   const { data, isLoading, error } = trpc.parcels.getByTracking.useQuery(
     { tenantId, trackingNumber: trackingNumber ?? "" },
@@ -171,6 +176,7 @@ export default function ParcelDetail() {
       toast.success(t.success);
       setPodOpen(false);
       setOtpOpen(false);
+      setPodCapturedPhoto(null);
       utils.parcels.getByTracking.invalidate({ tenantId, trackingNumber: trackingNumber ?? "" });
     },
     onError: err => toast.error(err.message || t.error),
@@ -184,16 +190,56 @@ export default function ParcelDetail() {
     onError: err => toast.error(err.message || t.error),
   });
 
-  // Handle photo capture via file input
-  const handlePhotoCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const base64 = (reader.result as string).split(",")[1];
-      setPodPhoto(base64);
-    };
-    reader.readAsDataURL(file);
+  /**
+   * T-LOG-02: Handle POD submission with watermarked photo.
+   * Online: convert blob → base64, call submitPOD directly.
+   * Offline: save blob to Dexie, queue mutation (photo synced separately by worker).
+   */
+  const handleSubmitPOD = async () => {
+    if (!podName || !data?.data?.parcel) return;
+    const parcel = data.data.parcel;
+
+    let imageBase64: string | undefined;
+
+    if (podCapturedPhoto) {
+      // Save photo to Dexie for offline resilience (always — not just when offline)
+      await savePodPhotoLocally({
+        tenantId,
+        parcelId: parcel.id,
+        trackingNumber: parcel.trackingNumber,
+        photoBlob: podCapturedPhoto.blob,
+        lat: podCapturedPhoto.geo?.lat ?? null,
+        lng: podCapturedPhoto.geo?.lng ?? null,
+        capturedAt: podCapturedPhoto.capturedAt.getTime(),
+        synced: false,
+      });
+
+      // Convert blob to base64 for the API payload
+      imageBase64 = await blobToBase64(podCapturedPhoto.blob);
+    }
+
+    if (isOnline) {
+      podMutation.mutate({
+        tenantId,
+        parcelId: parcel.id,
+        receivedByName: podName,
+        receivedByRelation: podRelation,
+        imageBase64,
+      });
+    } else {
+      // Offline: queue the full mutation (including base64 so it can be replayed)
+      await enqueueMutation("parcels.submitPOD", {
+        tenantId,
+        parcelId: parcel.id,
+        receivedByName: podName,
+        receivedByRelation: podRelation,
+        imageBase64,
+      });
+      toast.success("Delivery recorded offline. Will sync when connected.");
+      setPodOpen(false);
+      setOtpOpen(false);
+      setPodCapturedPhoto(null);
+    }
   };
 
   // L-06: Handle OTP verification — online or offline
@@ -580,20 +626,56 @@ export default function ParcelDetail() {
                       data-testid="input-pod-relation"
                     />
                   </div>
+                  {/* T-LOG-02: Live camera capture — gallery uploads blocked */}
                   <div className="space-y-1.5">
                     <Label className="flex items-center gap-2">
                       <Camera className="h-4 w-4" />
                       {t.capturePhoto}
+                      <span className="text-xs font-normal text-muted-foreground ml-1">(optional)</span>
                     </Label>
-                    <Input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      onChange={handlePhotoCapture}
-                      data-testid="input-pod-photo"
-                    />
-                    {podPhoto && (
-                      <p className="text-xs text-green-600">✓ Photo captured</p>
+
+                    {podCapturedPhoto ? (
+                      /* Preview of watermarked photo */
+                      <div className="space-y-2">
+                        <div className="relative rounded-lg overflow-hidden bg-black border border-border">
+                          <img
+                            src={podCapturedPhoto.dataUrl}
+                            alt="Watermarked POD photo"
+                            className="w-full max-h-48 object-contain"
+                            data-testid="img-pod-preview-form"
+                          />
+                          <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs text-center py-1">
+                            Watermarked — timestamp &amp; GPS burned in
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 text-xs text-green-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            <span>Photo captured</span>
+                            {podCapturedPhoto.geo && (
+                              <span className="text-muted-foreground">
+                                · GPS {podCapturedPhoto.geo.lat.toFixed(3)}°, {podCapturedPhoto.geo.lng.toFixed(3)}°
+                              </span>
+                            )}
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1 text-xs"
+                            onClick={() => setPodCapturedPhoto(null)}
+                            data-testid="button-retake-pod-photo"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Retake
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      /* Live camera widget */
+                      <CameraPOD
+                        trackingNumber={parcel.trackingNumber}
+                        onPhoto={result => setPodCapturedPhoto(result)}
+                      />
                     )}
                   </div>
                   <div className="space-y-1.5">
@@ -608,15 +690,7 @@ export default function ParcelDetail() {
                   <Button
                     className="w-full"
                     disabled={!podName || podMutation.isPending}
-                    onClick={() =>
-                      podMutation.mutate({
-                        tenantId,
-                        parcelId: parcel.id,
-                        receivedByName: podName,
-                        receivedByRelation: podRelation,
-                        imageBase64: podPhoto,
-                      })
-                    }
+                    onClick={handleSubmitPOD}
                     data-testid="button-confirm-pod"
                   >
                     {podMutation.isPending ? t.loading : t.submitPOD}

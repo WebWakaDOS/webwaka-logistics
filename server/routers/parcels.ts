@@ -31,6 +31,7 @@ import {
   softDeleteParcel,
   storeParcelOtp,
   updateParcelStatus,
+  updatePodImageUrl,
 } from "../parcels.db";
 import {
   buildOfflineToken,
@@ -556,6 +557,48 @@ export const parcelsRouter = router({
       });
 
       return { success: true, data: pod };
+    }),
+
+  /**
+   * T-LOG-02: Upload a watermarked POD photo to R2 and attach to the POD record.
+   * Called by the background sync worker when a photo is pending upload from Dexie.
+   * Also called directly when the rider submits POD while online with a pre-watermarked photo.
+   * Returns the R2 URL so the caller can update the local Dexie record.
+   */
+  uploadPodPhoto: agentProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        parcelId: z.number().int().positive(),
+        /** Watermarked JPEG as base64 — watermark was burned in client-side */
+        imageBase64: z.string().min(1),
+        lat: z.number().nullable().optional(),
+        lng: z.number().nullable().optional(),
+        capturedAt: z.number().int().positive(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const parcel = await getParcelById(input.tenantId, input.parcelId);
+      if (!parcel) throw new TRPCError({ code: "NOT_FOUND", message: "Parcel not found" });
+
+      const imageBuffer = Buffer.from(input.imageBase64, "base64");
+      const key = `pod/${input.tenantId}/${input.parcelId}/photo-${input.capturedAt}.jpg`;
+      const result = await storagePut(key, imageBuffer, "image/jpeg");
+
+      logger.info("T-LOG-02: POD photo uploaded", {
+        tenantId: input.tenantId,
+        parcelId: input.parcelId,
+        key: result.key,
+        hasGeo: input.lat !== null && input.lat !== undefined,
+      });
+
+      // If a POD record already exists (submitted online), update its imageUrl
+      const existingPod = await getProofOfDelivery(input.tenantId, input.parcelId);
+      if (existingPod && !existingPod.imageUrl) {
+        await updatePodImageUrl(existingPod.id, result.url, result.key);
+      }
+
+      return { success: true, imageUrl: result.url };
     }),
 
   /**
