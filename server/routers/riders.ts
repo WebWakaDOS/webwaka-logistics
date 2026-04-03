@@ -262,8 +262,9 @@ export const ridersRouter = router({
 
       await publishKycEvent(KycEvents.VERIFICATION_REQUESTED, kycPayload);
 
+      // null explicitly clears any prior rejection reason from the DB
       const updated = await updateRiderKycStatus(input.tenantId, input.riderId, "VERIFYING", {
-        rejectionReason: undefined,
+        rejectionReason: null,
       });
 
       logger.info("Admin re-triggered KYC", { tenantId: input.tenantId, riderId: input.riderId });

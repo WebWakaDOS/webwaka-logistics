@@ -103,7 +103,12 @@ export async function updateRiderKycStatus(
   kycStatus: RiderKycStatus,
   fields: {
     kycReference?: string;
-    rejectionReason?: string;
+    /**
+     * Pass `null` to explicitly clear an existing rejection reason (e.g. on re-trigger).
+     * Pass `undefined` (default) to leave the column unchanged.
+     * Pass a string to set a new rejection reason.
+     */
+    rejectionReason?: string | null;
     verifiedAt?: Date;
     submittedAt?: Date;
   } = {},
@@ -118,6 +123,7 @@ export async function updateRiderKycStatus(
       kycStatus,
       updatedAt: new Date(),
       ...(fields.kycReference !== undefined && { kycReference: fields.kycReference }),
+      // null clears the field; undefined leaves it untouched
       ...(fields.rejectionReason !== undefined && { rejectionReason: fields.rejectionReason }),
       ...(fields.verifiedAt !== undefined && { verifiedAt: fields.verifiedAt }),
       ...(fields.submittedAt !== undefined && { submittedAt: fields.submittedAt }),
