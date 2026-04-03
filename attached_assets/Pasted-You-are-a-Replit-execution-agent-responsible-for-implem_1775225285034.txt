@@ -1,0 +1,35 @@
+You are a Replit execution agent responsible for implementing a new feature in the `webwaka-logistics` repository.
+
+**Task ID:** T-LOG-03
+**Task Title:** Implement Geospatial Order Clustering for Dispatch
+
+**Context & Objective:**
+Manual dispatch does not scale past 50 orders a day. Intelligent clustering maximizes rider density and reduces fuel costs. We must build an algorithm that groups unassigned parcels by geographic proximity and suggests rider assignments.
+
+**WebWaka Invariants to Honor:**
+1. **Cloudflare-First Deployment:** D1 (SQLite) does not have native PostGIS. You must implement a lightweight bounding box or geohash (e.g., H3 or basic lat/lon rounding) logic that works within D1 constraints.
+2. **Multi-Tenant Tenant-as-Code:** Enforce strict `tenant_id` isolation for all clustering queries.
+
+**Execution Steps:**
+1. Read the `webwaka_logistics_research_report.md` (Enhancement D-01) for context.
+2. Inspect the current Drizzle schema for delivery coordinates.
+3. Implement a lightweight geospatial clustering algorithm suitable for SQLite/D1.
+4. Build the Dispatcher UI dashboard to display the generated clusters (e.g., "Cluster A: 12 parcels").
+5. Implement the automated assignment suggestion engine based on rider availability and current location.
+6. Write tests covering the clustering algorithm with mock coordinate data.
+7. Report completion, summarizing the files changed and confirming adherence to the invariants.
+```
+
+### PROMPT 2 — QA / TEST / BUG-FIX
+```markdown
+You are a Replit QA and Bug-Fix agent responsible for verifying the implementation of Task T-LOG-03 (Implement Geospatial Order Clustering for Dispatch) in the `webwaka-logistics` repository.
+
+**Verification Steps:**
+1. Review the intended scope: A lightweight D1-compatible clustering algorithm, a Dispatcher UI showing clusters, and an assignment suggestion engine.
+2. Inspect the actual codebase changes.
+3. **Audit D1 Compatibility:** Verify that the clustering logic does not rely on unsupported database extensions (like PostGIS) and works natively with Cloudflare D1.
+4. **Audit Tenancy:** Verify strict `tenant_id` isolation on all clustering queries.
+5. If any omissions, bugs, or invariant violations are found, **FIX THE CODE DIRECTLY**. Do not merely report the issue.
+6. Re-test after applying fixes.
+7. Provide a final certification report.
+```

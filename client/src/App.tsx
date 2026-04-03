@@ -17,6 +17,7 @@ import ParcelsList from "./pages/ParcelsList";
 import CreateParcel from "./pages/CreateParcel";
 import ParcelDetail from "./pages/ParcelDetail";
 import PublicTracking from "./pages/PublicTracking";
+import Dispatch from "./pages/Dispatch";
 import { useEffect } from "react";
 import { initSyncEngine, registerSyncHandler } from "./lib/syncEngine";
 import { initPodPhotoSync } from "./lib/podPhotoSyncWorker";
@@ -147,6 +148,13 @@ function Router() {
         {() => (
           <AuthenticatedLayout>
             <ParcelDetail />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/dispatch">
+        {() => (
+          <AuthenticatedLayout>
+            <Dispatch />
           </AuthenticatedLayout>
         )}
       </Route>

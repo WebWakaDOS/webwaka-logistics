@@ -141,6 +141,19 @@ function runMigrations(sqlite: Database.Database) {
       // Column already exists — safe to ignore
     }
   }
+
+  // T-LOG-03: Add geocoded coordinates to parcels (idempotent)
+  const tlog03Columns = [
+    `ALTER TABLE parcels ADD COLUMN recipientLat REAL`,
+    `ALTER TABLE parcels ADD COLUMN recipientLng REAL`,
+  ];
+  for (const stmt of tlog03Columns) {
+    try {
+      sqlite.exec(stmt);
+    } catch {
+      // Column already exists — safe to ignore
+    }
+  }
 }
 
 export { getDb };

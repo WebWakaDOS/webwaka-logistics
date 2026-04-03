@@ -74,6 +74,9 @@ export const parcels = sqliteTable("parcels", {
   otpExpiresAt: integer("otpExpiresAt"),
   /** L-06: Timestamp when the OTP was successfully verified by the rider */
   otpVerifiedAt: integer("otpVerifiedAt", { mode: "timestamp" }),
+  /** T-LOG-03: Geocoded delivery coordinates — null if not yet geocoded */
+  recipientLat: real("recipientLat"),
+  recipientLng: real("recipientLng"),
   createdAt: integer("createdAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
   deletedAt: integer("deletedAt", { mode: "timestamp" }),
