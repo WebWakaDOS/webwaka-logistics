@@ -100,6 +100,17 @@ export const dispatchRouter = router({
       }),
     )
     .mutation(async ({ input, ctx }) => {
+      // BUG-03 FIX: Validate the agent exists and has an eligible role before
+      // assigning. Prevents parcels being silently bound to phantom agent IDs.
+      const eligibleAgents = getAvailableAgents();
+      const agentExists = eligibleAgents.some(a => a.id === input.agentId);
+      if (!agentExists) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `Agent #${input.agentId} does not exist or is not eligible for assignments`,
+        });
+      }
+
       const count = bulkAssignParcels(input.tenantId, input.parcelIds, input.agentId);
 
       logger.info("Cluster assigned", {

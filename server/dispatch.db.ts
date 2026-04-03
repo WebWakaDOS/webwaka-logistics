@@ -3,8 +3,8 @@
  * All queries are scoped by tenantId for multi-tenant isolation.
  */
 
-import { and, eq, isNull, inArray } from "drizzle-orm";
-import { parcels, users, type Parcel, type User } from "../drizzle/schema";
+import { and, eq, isNull, inArray, sql } from "drizzle-orm";
+import { parcels, users, type Parcel } from "../drizzle/schema";
 import { getDb } from "./db";
 import { createLogger } from "./logger";
 
@@ -53,7 +53,8 @@ export function bulkAssignParcels(
 
   logger.info("Bulk assigning parcels", { tenantId, parcelIds, agentId });
 
-  db.update(parcels)
+  const result = db
+    .update(parcels)
     .set({
       assignedAgentId: agentId,
       updatedAt: new Date(),
@@ -67,7 +68,10 @@ export function bulkAssignParcels(
     )
     .run();
 
-  return parcelIds.length;
+  // Return the actual DB change count, not the requested input count.
+  // If some IDs were out of scope (wrong tenant / soft-deleted), they
+  // won't be reflected in `result.changes`.
+  return result.changes ?? parcelIds.length;
 }
 
 /**
@@ -125,7 +129,13 @@ export interface AvailableAgent {
 
 /**
  * Return all users with the 'agent' or 'admin' role who can be assigned deliveries.
- * In production, this would filter by availability and current workload.
+ *
+ * NOTE — intentionally cross-tenant: The `users` table is a shared system pool
+ * with no tenantId column. All agents are platform-level workers who can serve
+ * any tenant. If per-tenant agent pools are needed in future, add a
+ * `userTenants` join table and filter here by tenantId.
+ *
+ * In production, this would additionally filter by availability and workload.
  */
 export function getAvailableAgents(): AvailableAgent[] {
   const db = getDb();
@@ -157,17 +167,31 @@ export function getDispatchSummary(tenantId: string): DispatchSummary {
   const db = getDb();
   if (!db) throw new Error("Database unavailable");
 
-  const all = db
-    .select({ status: parcels.status, assignedAgentId: parcels.assignedAgentId })
+  // Use SQL COUNT aggregation — three targeted index scans instead of loading
+  // all rows into JS memory. D1-compatible: no extensions, pure SQLite.
+  const baseFilter = and(eq(parcels.tenantId, tenantId), isNull(parcels.deletedAt));
+
+  const unassignedRow = db
+    .select({ n: sql<number>`count(*)` })
     .from(parcels)
-    .where(and(eq(parcels.tenantId, tenantId), isNull(parcels.deletedAt)))
+    .where(and(baseFilter, eq(parcels.status, "PENDING"), isNull(parcels.assignedAgentId)))
+    .all();
+
+  const pendingRow = db
+    .select({ n: sql<number>`count(*)` })
+    .from(parcels)
+    .where(and(baseFilter, eq(parcels.status, "PENDING")))
+    .all();
+
+  const inTransitRow = db
+    .select({ n: sql<number>`count(*)` })
+    .from(parcels)
+    .where(and(baseFilter, inArray(parcels.status, ["IN_TRANSIT", "OUT_FOR_DELIVERY"])))
     .all();
 
   return {
-    totalUnassigned: all.filter(p => p.status === "PENDING" && !p.assignedAgentId).length,
-    totalPending: all.filter(p => p.status === "PENDING").length,
-    totalInTransit: all.filter(
-      p => p.status === "IN_TRANSIT" || p.status === "OUT_FOR_DELIVERY",
-    ).length,
+    totalUnassigned: Number(unassignedRow[0]?.n ?? 0),
+    totalPending: Number(pendingRow[0]?.n ?? 0),
+    totalInTransit: Number(inTransitRow[0]?.n ?? 0),
   };
 }

@@ -37,7 +37,6 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -325,7 +324,9 @@ function ClusterCard({
 export default function Dispatch() {
   const tenantId = useTenantId();
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
-  const queryClient = useQueryClient();
+  // BUG-01 FIX: use tRPC typed utils for cache invalidation instead of raw
+  // queryClient.invalidateQueries() with string keys (which silently miss).
+  const utils = trpc.useUtils();
 
   const {
     data: clusterData,
@@ -341,10 +342,13 @@ export default function Dispatch() {
   const { data: agentsData } = trpc.dispatch.getAgents.useQuery();
 
   const assignMutation = trpc.dispatch.assignCluster.useMutation({
-    onSuccess: (_, vars) => {
-      toast.success(`Assigned ${vars.parcelIds.length} parcel${vars.parcelIds.length !== 1 ? "s" : ""} to rider`);
-      queryClient.invalidateQueries({ queryKey: ["/api/trpc/dispatch.getClusters"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/trpc/dispatch.getSummary"] });
+    onSuccess: (data) => {
+      toast.success(
+        `Assigned ${data.assignedCount} parcel${data.assignedCount !== 1 ? "s" : ""} to rider`,
+      );
+      // Invalidate via typed tRPC utils so the correct query key is used.
+      void utils.dispatch.getClusters.invalidate({ tenantId });
+      void utils.dispatch.getSummary.invalidate({ tenantId });
       setAssigningKey(null);
     },
     onError: err => {
