@@ -394,6 +394,15 @@ export async function markInboundScanSynced(
 }
 
 /**
+ * Retrieve ALL unsynced inbound scans across every tenant.
+ * Used by the background sync worker to batch-flush regardless of which
+ * tenant(s) the device has scanned for.
+ */
+export async function getAllPendingInboundScans(): Promise<InboundScan[]> {
+  return offlineDb.pendingInboundScans.where("synced").equals(0).toArray();
+}
+
+/**
  * Count all unsynced inbound scans across all tenants.
  * Used by the UI sync-status badge.
  */

@@ -62,38 +62,44 @@ const SCANNER_ELEMENT_ID = "receiving-scanner-viewfinder";
 // Audio feedback — Web Audio API beep (no external assets needed)
 // ─────────────────────────────────────────────────────────────────────────────
 
-function playSuccessBeep(): void {
+/**
+ * Play a short beep using Web Audio API.
+ * The AudioContext is closed after the sound finishes to prevent
+ * resource accumulation over long scanning sessions (BUG-03 fix).
+ */
+function playBeep(
+  type: OscillatorType,
+  frequency: number,
+  durationSec: number,
+  gain: number,
+): void {
   try {
     const ctx = new AudioContext();
     const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "sine";
-    osc.frequency.value = 1046; // C6 — distinctive, pleasant warehouse beep
-    gain.gain.setValueAtTime(0.35, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+    const gainNode = ctx.createGain();
+    osc.connect(gainNode);
+    gainNode.connect(ctx.destination);
+    osc.type = type;
+    osc.frequency.value = frequency;
+    gainNode.gain.setValueAtTime(gain, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationSec);
     osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.12);
+    osc.stop(ctx.currentTime + durationSec);
+    // Close the context a little after the sound ends to free OS audio handles.
+    osc.addEventListener("ended", () => {
+      ctx.close().catch(() => {});
+    });
   } catch {
-    // AudioContext blocked by browser policy — no beep, scan still saved
+    // AudioContext may be blocked by browser policy — no beep, scan still saved
   }
 }
 
+function playSuccessBeep(): void {
+  playBeep("sine", 1046, 0.12, 0.35); // C6 — distinctive, pleasant warehouse beep
+}
+
 function playErrorBeep(): void {
-  try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.type = "square";
-    osc.frequency.value = 220; // A3 — low error tone
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.2);
-  } catch {}
+  playBeep("square", 220, 0.2, 0.2); // A3 — low error tone
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

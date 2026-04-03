@@ -14,7 +14,7 @@
  */
 
 import {
-  getPendingInboundScans,
+  getAllPendingInboundScans,
   markInboundScanSynced,
   pruneOldInboundScans,
   type InboundScan,
@@ -45,6 +45,20 @@ export type InboundSyncStatus = "idle" | "syncing" | "error" | "complete";
 // ─────────────────────────────────────────────────────────────────────────────
 // Pure helpers (testable without Dexie)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Split an array into sequential chunks of at most `size` elements.
+ * Used to stay within the server's Zod `max(500)` cap on bulkReceiveScans.
+ *
+ * @example chunkArray([1,2,3,4,5], 2) → [[1,2],[3,4],[5]]
+ */
+export function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
 
 /**
  * Group an array of InboundScan records by their tenantId.
@@ -101,6 +115,17 @@ function notifyListeners(status: InboundSyncStatus): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Maximum tracking numbers per server call.
+ * Matches the Zod `max(500)` cap on `bulkReceiveScansInput.trackingNumbers`.
+ * Large offline batches are split into chunks of this size.
+ */
+const BATCH_CHUNK_SIZE = 500;
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Core flush function
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -110,19 +135,20 @@ function notifyListeners(status: InboundSyncStatus): void {
  * Algorithm:
  *  1. Collect all unsynced scans from every tenant via Dexie.
  *  2. Group by tenantId.
- *  3. For each tenant, call warehouse.bulkReceiveScans with the unique
- *     tracking number list.
- *  4. Mark each scan synced with its server-determined result code.
- *  5. Prune scans older than 72 hours to keep the local store lean.
+ *  3. For each tenant, de-duplicate tracking numbers and split into chunks
+ *     of ≤ BATCH_CHUNK_SIZE (server Zod cap).
+ *  4. For each chunk, call warehouse.bulkReceiveScans.
+ *  5. Mark each scan synced with its server-determined result code.
+ *  6. Prune scans older than 72 hours to keep the local store lean.
  */
 export async function flushInboundScans(client: InboundSyncClient): Promise<void> {
   if (isSyncing) return;
   if (typeof navigator !== "undefined" && !navigator.onLine) return;
 
   // Collect pending scans across ALL tenants (the worker runs globally).
-  // We fetch all unsynced, then filter per-tenant during grouping.
-  const allTenants = await getAllPendingScansAllTenants();
-  if (allTenants.length === 0) return;
+  // We fetch all unsynced, then group per-tenant during processing.
+  const allPending = await getAllPendingInboundScans();
+  if (allPending.length === 0) return;
 
   isSyncing = true;
   notifyListeners("syncing");
@@ -130,11 +156,12 @@ export async function flushInboundScans(client: InboundSyncClient): Promise<void
   let hasErrors = false;
 
   try {
-    const groups = groupScansByTenant(allTenants);
+    const groups = groupScansByTenant(allPending);
 
     for (const [tenantId, scans] of Array.from(groups.entries())) {
-      // De-duplicate tracking numbers within this batch (same number scanned
-      // multiple times while offline should only trigger one server update).
+      // De-duplicate tracking numbers within this tenant's batch.
+      // If the same label was scanned multiple times while offline, only
+      // one server call is needed — but ALL local records get marked synced.
       const uniqueByTracking = new Map<string, InboundScan>();
       for (const scan of scans) {
         if (!uniqueByTracking.has(scan.trackingNumber)) {
@@ -142,42 +169,66 @@ export async function flushInboundScans(client: InboundSyncClient): Promise<void
         }
       }
 
-      const trackingNumbers = Array.from(uniqueByTracking.keys());
+      const uniqueTrackingNumbers = Array.from(uniqueByTracking.keys());
 
-      try {
-        const result = await client.warehouse.bulkReceiveScans.mutate({
-          tenantId,
-          trackingNumbers,
-        });
+      // ── BUG-02 fix: chunk into ≤ BATCH_CHUNK_SIZE slices ─────────────────
+      // The server caps `trackingNumbers` at 500 per request (Zod validation).
+      // Exceeding this returns a Zod error and none of the scans would be
+      // marked synced. We split large batches into sequential chunks instead.
+      const chunks = chunkArray(uniqueTrackingNumbers, BATCH_CHUNK_SIZE);
 
-        // Mark each unique scan synced with the server's result.
-        for (const [trackingNumber, scan] of Array.from(uniqueByTracking.entries())) {
-          const scanResult = resolveResultPerScan(
-            trackingNumber,
-            result.notFound,
-            result.alreadyReceived,
-          );
-          if (scan.localId != null) {
-            await markInboundScanSynced(scan.localId, scanResult);
+      // Accumulate the server responses across all chunks so we can mark
+      // duplicates synced afterwards with the right result code.
+      const aggregatedNotFound: string[] = [];
+      const aggregatedAlreadyReceived: string[] = [];
+      let chunkError = false;
+
+      for (const chunk of chunks) {
+        try {
+          const result = await client.warehouse.bulkReceiveScans.mutate({
+            tenantId,
+            trackingNumbers: chunk,
+          });
+
+          aggregatedNotFound.push(...result.notFound);
+          aggregatedAlreadyReceived.push(...result.alreadyReceived);
+
+          // Mark each unique scan in this chunk synced immediately.
+          for (const trackingNumber of chunk) {
+            const scan = uniqueByTracking.get(trackingNumber);
+            if (scan?.localId != null) {
+              const scanResult = resolveResultPerScan(
+                trackingNumber,
+                result.notFound,
+                result.alreadyReceived,
+              );
+              await markInboundScanSynced(scan.localId, scanResult);
+            }
           }
+        } catch {
+          chunkError = true;
+          hasErrors = true;
+          // Leave this chunk's scans unsynced — they will be retried on the
+          // next flush cycle (isSyncing guard is reset at the end).
         }
+      }
 
-        // Duplicate scans (same tracking scanned multiple times while offline):
-        // mark them all synced with the same result code.
-        const duplicates = scans.filter((s: InboundScan) => !uniqueByTracking.has(s.trackingNumber) || uniqueByTracking.get(s.trackingNumber) !== s);
+      if (!chunkError) {
+        // Mark duplicate scan records (same tracking scanned > once offline)
+        // with the result derived from the aggregated server responses.
+        const duplicates = scans.filter(
+          (s: InboundScan) => uniqueByTracking.get(s.trackingNumber) !== s,
+        );
         for (const dup of duplicates) {
           if (dup.localId != null) {
             const scanResult = resolveResultPerScan(
               dup.trackingNumber,
-              result.notFound,
-              result.alreadyReceived,
+              aggregatedNotFound,
+              aggregatedAlreadyReceived,
             );
             await markInboundScanSynced(dup.localId, scanResult);
           }
         }
-      } catch {
-        hasErrors = true;
-        // Don't mark these scans synced — they'll be retried on the next flush.
       }
     }
 
@@ -192,15 +243,8 @@ export async function flushInboundScans(client: InboundSyncClient): Promise<void
   notifyListeners(hasErrors ? "error" : "complete");
 }
 
-/**
- * Internal: collect all unsynced scans across all tenants.
- * Works around the fact that we can't know all tenantIds upfront —
- * we query all unsynced records and let groupScansByTenant sort them.
- */
-async function getAllPendingScansAllTenants(): Promise<InboundScan[]> {
-  const { offlineDb } = await import("./offlineDb");
-  return offlineDb.pendingInboundScans.where("synced").equals(0).toArray();
-}
+// getAllPendingInboundScans is imported statically from offlineDb — no dynamic
+// import needed. The function queries all tenants' unsynced records.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Initialiser — attaches online/offline event listeners

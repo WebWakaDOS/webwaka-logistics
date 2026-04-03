@@ -6,7 +6,7 @@
 
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, gte, inArray, isNull } from "drizzle-orm";
 import { protectedProcedure, router } from "../_core/trpc";
 import { createLogger } from "../logger";
 import { getDb } from "../db";
@@ -154,7 +154,7 @@ export const warehouseRouter = router({
       const db = getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
 
-      // Midnight UTC of the current day
+      // Midnight UTC of the current day — parcels received since then
       const todayMidnight = new Date();
       todayMidnight.setUTCHours(0, 0, 0, 0);
 
@@ -166,6 +166,8 @@ export const warehouseRouter = router({
             eq(parcels.tenantId, input.tenantId),
             eq(parcels.status, "IN_WAREHOUSE"),
             isNull(parcels.deletedAt),
+            // Only parcels whose updatedAt is on or after today's midnight UTC
+            gte(parcels.updatedAt, todayMidnight),
           ),
         )
         .all();

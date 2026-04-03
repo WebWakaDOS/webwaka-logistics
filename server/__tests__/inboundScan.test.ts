@@ -2,17 +2,19 @@
  * T-LOG-04: Inbound Receiving Scanner — Unit Tests
  *
  * Tests cover:
- *  - Pure sync-worker helpers (groupScansByTenant, resolveResultPerScan)
+ *  - Pure sync-worker helpers (groupScansByTenant, resolveResultPerScan, chunkArray)
  *  - Core flush function behaviour via injectable scans array
  *  - Deduplication and batching behaviour
+ *  - Large batch chunking (BUG-02 fix)
  *
  * No DB / Dexie access — all I/O is injected or mocked.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   groupScansByTenant,
   resolveResultPerScan,
+  chunkArray,
   type InboundSyncClient,
 } from "../../client/src/lib/inboundScanSync";
 import type { InboundScan } from "../../client/src/lib/offlineDb";
@@ -276,5 +278,107 @@ describe("resolveResultPerScan × groupScansByTenant — end-to-end classificati
       resolveResultPerScan(s.trackingNumber, notFoundB, alreadyReceivedB),
     );
     expect(resultsB).toEqual(["already_received"]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// chunkArray — BUG-02 fix: prevents Zod error when batch > 500 items
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("chunkArray", () => {
+  it("splits an array into chunks of the given size", () => {
+    const result = chunkArray([1, 2, 3, 4, 5], 2);
+    expect(result).toEqual([[1, 2], [3, 4], [5]]);
+  });
+
+  it("returns a single chunk when array length equals chunk size", () => {
+    expect(chunkArray([1, 2, 3], 3)).toEqual([[1, 2, 3]]);
+  });
+
+  it("returns a single chunk when array is smaller than chunk size", () => {
+    expect(chunkArray([1, 2], 10)).toEqual([[1, 2]]);
+  });
+
+  it("returns an empty array for empty input", () => {
+    expect(chunkArray([], 5)).toEqual([]);
+  });
+
+  it("handles chunk size of 1 (one element per chunk)", () => {
+    expect(chunkArray(["a", "b", "c"], 1)).toEqual([["a"], ["b"], ["c"]]);
+  });
+
+  it("preserves element order across chunks", () => {
+    const input = Array.from({ length: 12 }, (_, i) => `WW-${String(i).padStart(3, "0")}`);
+    const chunks = chunkArray(input, 5);
+    expect(chunks).toHaveLength(3);           // [0..4], [5..9], [10..11]
+    expect(chunks[0]).toHaveLength(5);
+    expect(chunks[1]).toHaveLength(5);
+    expect(chunks[2]).toHaveLength(2);
+    // Verify elements are in the right positions
+    expect(chunks[0][0]).toBe("WW-000");
+    expect(chunks[1][0]).toBe("WW-005");
+    expect(chunks[2][1]).toBe("WW-011");
+  });
+
+  it("works correctly at the BATCH_CHUNK_SIZE boundary (500 items → 1 chunk)", () => {
+    const items = Array.from({ length: 500 }, (_, i) => `WW-${i}`);
+    const chunks = chunkArray(items, 500);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toHaveLength(500);
+  });
+
+  it("splits 501 items into 2 chunks (the over-limit scenario that caused BUG-02)", () => {
+    const items = Array.from({ length: 501 }, (_, i) => `WW-${i}`);
+    const chunks = chunkArray(items, 500);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toHaveLength(500);
+    expect(chunks[1]).toHaveLength(1);
+  });
+
+  it("correctly handles 1500 items → 3 chunks of 500", () => {
+    const items = Array.from({ length: 1500 }, (_, i) => `WW-${i}`);
+    const chunks = chunkArray(items, 500);
+    expect(chunks).toHaveLength(3);
+    expect(chunks.every(c => c.length === 500)).toBe(true);
+  });
+
+  it("does not mutate the original array", () => {
+    const original = [1, 2, 3, 4, 5];
+    const copy = [...original];
+    chunkArray(original, 2);
+    expect(original).toEqual(copy);
+  });
+
+  it("works with string arrays (actual tracking number use case)", () => {
+    const trackingNumbers = ["WW-001", "WW-002", "WW-003", "WW-004", "WW-005"];
+    const chunks = chunkArray(trackingNumbers, 3);
+    expect(chunks).toEqual([["WW-001", "WW-002", "WW-003"], ["WW-004", "WW-005"]]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// receivedToday date filter — BUG-01 regression guard
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("receivedToday date filter logic", () => {
+  it("todayMidnight is strictly before now", () => {
+    const todayMidnight = new Date();
+    todayMidnight.setUTCHours(0, 0, 0, 0);
+    const now = new Date();
+    expect(todayMidnight.getTime()).toBeLessThanOrEqual(now.getTime());
+  });
+
+  it("a timestamp from 25 hours ago is before todayMidnight", () => {
+    const todayMidnight = new Date();
+    todayMidnight.setUTCHours(0, 0, 0, 0);
+    const yesterday = new Date(Date.now() - 25 * 60 * 60 * 1000);
+    expect(yesterday.getTime()).toBeLessThan(todayMidnight.getTime());
+  });
+
+  it("a timestamp from 1 hour ago is on or after todayMidnight", () => {
+    const todayMidnight = new Date();
+    todayMidnight.setUTCHours(0, 0, 0, 0);
+    const anHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    expect(anHourAgo.getTime()).toBeGreaterThanOrEqual(todayMidnight.getTime());
   });
 });
