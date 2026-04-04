@@ -21,6 +21,9 @@ import Dispatch from "./pages/Dispatch";
 import ReceivingScanner from "./pages/ReceivingScanner";
 import RiderOnboarding from "./pages/RiderOnboarding";
 import RiderApplications from "./pages/RiderApplications";
+import DriverApp from "./pages/DriverApp";
+import FleetTelemetry from "./pages/FleetTelemetry";
+import PodVault from "./pages/PodVault";
 import { useEffect } from "react";
 import { initSyncEngine, registerSyncHandler } from "./lib/syncEngine";
 import { initPodPhotoSync } from "./lib/podPhotoSyncWorker";
@@ -184,6 +187,27 @@ function Router() {
         {() => (
           <AuthenticatedLayout>
             <RiderApplications />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/driver">
+        {() => (
+          <AuthenticatedLayout>
+            <DriverApp />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/fleet">
+        {() => (
+          <AuthenticatedLayout>
+            <FleetTelemetry />
+          </AuthenticatedLayout>
+        )}
+      </Route>
+      <Route path="/pod-vault">
+        {() => (
+          <AuthenticatedLayout>
+            <PodVault />
           </AuthenticatedLayout>
         )}
       </Route>

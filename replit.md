@@ -83,6 +83,48 @@ drizzle/         Database schema and migrations
 - Verified OTPs are recorded with `otpVerifiedAt` timestamp in the `parcels` table
 - 30 unit tests covering: generation, hashing, offline tokens, expiry, replay prevention, Termii dispatch failure modes
 
+### Phase 1: Offline-First Driver App + POD Vault
+
+**Driver App** (`/driver`) — `client/src/pages/DriverApp.tsx`
+- Riders see all their assigned parcels grouped by status (PENDING → COLLECTED → IN_TRANSIT → OUT_FOR_DELIVERY)
+- Per-parcel actions: "Mark Out for Delivery" (queued offline via Dexie), OTP verification (online or offline HMAC token), then "Capture Proof of Delivery" using `CameraPOD`
+- GPS watchPosition reports rider coordinates to `fleet.reportLocation` every cycle; geofencing SMS sends automatically when rider enters 1 km of a recipient
+- Online/offline status indicator; mutation queue via `enqueueMutation` in `offlineDb.ts`
+
+**POD Vault** (`/pod-vault`) — `client/src/pages/PodVault.tsx`
+- Grid view of all proof-of-delivery records for the tenant with photo thumbnails
+- Click-to-expand lightbox shows full delivery photo, signature, recipient info, and submission timestamp
+- Pagination (24 per page) via `parcels.listPODs` tRPC query
+
+**New tRPC procedures**:
+- `parcels.myDeliveries` — agent-scoped, returns all parcels assigned to the authenticated rider
+- `parcels.listPODs` — returns paginated POD records with parcel join data
+
+### Phase 2: AI Route Optimization + Automated Dispatch Engine
+
+**AI Optimize button** on Dispatch page — calls `dispatch.optimizeRoute`
+- Sends all unassigned parcel addresses to Gemini LLM (via `invokeLLM`) with a Lagos traffic-aware system prompt
+- LLM responds with a JSON array of parcel IDs in optimal delivery order
+- Falls back to original order silently if AI unavailable
+
+**Auto Dispatch button** on Dispatch page — calls `dispatch.autoDispatch`
+- Clusters all PENDING unassigned parcels using `clusterParcels` algorithm
+- Round-robin assigns each cluster to available agents
+- Shows a dismissible result banner listing cluster → agent assignments
+
+### Phase 3: Real-Time Geofencing + Fleet Telemetry Dashboard
+
+**Fleet Telemetry** (`/fleet`) — `client/src/pages/FleetTelemetry.tsx`
+- Table + map toggle showing all active riders with GPS coords, speed, and last-seen time
+- Auto-refreshes every 30 seconds via `fleet.getActiveRiders`
+- Links to Google Maps for each rider's live position
+
+**Server infrastructure**:
+- `rider_locations` SQLite table in `drizzle/schema.ts`
+- `server/fleet.db.ts` — `haversineMetres`, `upsertRiderLocation`, `getActiveRiderLocations`, `checkGeofenceHits`
+- `server/routers/fleet.ts` — `reportLocation` (agentProcedure), `getActiveRiders` (protectedProcedure)
+- Geofencing: when a rider reports GPS within 1 km of an OUT_FOR_DELIVERY parcel, Termii SMS fires to the customer
+
 ## Migration Notes (Replit)
 
 - Removed `@builder.io/vite-plugin-jsx-loc` (incompatible with Vite 7) and `vite-plugin-manus-runtime` (Manus-specific)

@@ -238,3 +238,33 @@ export const guarantors = sqliteTable("guarantors", {
 
 export type Guarantor = typeof guarantors.$inferSelect;
 export type InsertGuarantor = typeof guarantors.$inferInsert;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rider Locations — Fleet Telemetry (Real-Time Geofencing & Fleet Dashboard)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Last known GPS position for each active rider.
+ * Upserted every time a rider reports their location from the Driver App.
+ * Used by the Fleet Telemetry Dashboard and Geofencing engine.
+ */
+export const riderLocations = sqliteTable("rider_locations", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  /** The rider/agent user ID */
+  userId: integer("userId").notNull().unique(),
+  tenantId: text("tenantId").notNull(),
+  lat: real("lat").notNull(),
+  lng: real("lng").notNull(),
+  /** Speed in km/h (optional, from GPS) */
+  speedKmh: real("speedKmh"),
+  /** Accuracy radius in metres */
+  accuracyM: real("accuracyM"),
+  /** Unix timestamp of last location report */
+  reportedAt: integer("reportedAt").notNull(),
+  /** Human-readable label, e.g. "Active", "Idle", "Offline" */
+  statusLabel: text("statusLabel").default("Active").notNull(),
+  updatedAt: integer("updatedAt", { mode: "timestamp" }).notNull().$defaultFn(() => new Date()),
+});
+
+export type RiderLocation = typeof riderLocations.$inferSelect;
+export type InsertRiderLocation = typeof riderLocations.$inferInsert;

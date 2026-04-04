@@ -36,6 +36,8 @@ import {
   Bike,
   AlertTriangle,
   CheckCircle2,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,6 +326,10 @@ function ClusterCard({
 export default function Dispatch() {
   const tenantId = useTenantId();
   const [assigningKey, setAssigningKey] = useState<string | null>(null);
+  const [autoDispatchResult, setAutoDispatchResult] = useState<{
+    assignedCount: number;
+    assignments: { clusterLabel: string; agentId: number; parcelCount: number }[];
+  } | null>(null);
   // BUG-01 FIX: use tRPC typed utils for cache invalidation instead of raw
   // queryClient.invalidateQueries() with string keys (which silently miss).
   const utils = trpc.useUtils();
@@ -357,9 +363,48 @@ export default function Dispatch() {
     },
   });
 
+  const autoDispatchMutation = trpc.dispatch.autoDispatch.useMutation({
+    onSuccess: data => {
+      if (data.assignedCount === 0) {
+        toast.info("No unassigned parcels to dispatch");
+      } else {
+        toast.success(
+          `Auto-dispatched ${data.assignedCount} parcel${data.assignedCount !== 1 ? "s" : ""} across ${data.assignments.length} cluster${data.assignments.length !== 1 ? "s" : ""}`,
+        );
+        setAutoDispatchResult(data);
+      }
+      void utils.dispatch.getClusters.invalidate({ tenantId });
+      void utils.dispatch.getSummary.invalidate({ tenantId });
+    },
+    onError: err => toast.error(err.message ?? "Auto-dispatch failed"),
+  });
+
   const clusters = clusterData?.clusters ?? [];
   const agents = agentsData ?? [];
   const summary = summaryData;
+
+  // Build a flat list of parcels from all clusters for AI route optimization
+  const allClusterParcels = clusters.flatMap(c =>
+    c.parcels.map(p => ({
+      id: p.id,
+      trackingNumber: p.trackingNumber,
+      recipientAddress: p.recipientAddress,
+      recipientCity: p.recipientCity,
+      recipientState: p.recipientState,
+      recipientLat: p.recipientLat ?? null,
+      recipientLng: p.recipientLng ?? null,
+    })),
+  );
+
+  const optimizeRouteMutation = trpc.dispatch.optimizeRoute.useMutation({
+    onSuccess: data => {
+      toast.success(
+        `AI optimized route for ${data.optimizedIds.length} parcels — refresh clusters to see reordered sequence`,
+        { duration: 5000 },
+      );
+    },
+    onError: err => toast.error(err.message ?? "Route optimization failed"),
+  });
 
   const handleAssign = (clusterKey: string, parcelIds: number[], agentId: number) => {
     setAssigningKey(clusterKey);
@@ -378,17 +423,87 @@ export default function Dispatch() {
             Parcels grouped by delivery zone — assign riders per cluster
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => refetchClusters()}
-          disabled={clustersLoading}
-          data-testid="button-refresh-clusters"
-        >
-          <RefreshCw size={14} className={`mr-1.5 ${clustersLoading ? "animate-spin" : ""}`} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* AI Route Optimization */}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={allClusterParcels.length < 2 || optimizeRouteMutation.isPending}
+            onClick={() =>
+              optimizeRouteMutation.mutate({
+                tenantId,
+                parcels: allClusterParcels as Parameters<typeof optimizeRouteMutation.mutate>[0]["parcels"],
+              })
+            }
+            data-testid="button-ai-optimize"
+            title={allClusterParcels.length < 2 ? "Need at least 2 unassigned parcels to optimize" : "Use AI to compute the most efficient delivery route"}
+          >
+            {optimizeRouteMutation.isPending ? (
+              <Loader2 size={13} className="animate-spin mr-1.5" />
+            ) : (
+              <Sparkles size={13} className="mr-1.5 text-amber-500" />
+            )}
+            AI Optimize
+          </Button>
+
+          {/* Auto Dispatch */}
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={clusters.length === 0 || agents.length === 0 || autoDispatchMutation.isPending}
+            onClick={() => autoDispatchMutation.mutate({ tenantId })}
+            data-testid="button-auto-dispatch"
+            title={agents.length === 0 ? "Add agents before auto-dispatching" : "Auto-assign all clusters to available riders"}
+          >
+            {autoDispatchMutation.isPending ? (
+              <Loader2 size={13} className="animate-spin mr-1.5" />
+            ) : (
+              <Zap size={13} className="mr-1.5 text-blue-500" />
+            )}
+            Auto Dispatch
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => refetchClusters()}
+            disabled={clustersLoading}
+            data-testid="button-refresh-clusters"
+          >
+            <RefreshCw size={14} className={`mr-1.5 ${clustersLoading ? "animate-spin" : ""}`} />
+            Refresh
+          </Button>
+        </div>
       </div>
+
+      {/* ── Auto-dispatch result banner ───────────────────────────────── */}
+      {autoDispatchResult && autoDispatchResult.assignedCount > 0 && (
+        <div
+          className="flex items-start gap-2 text-sm bg-green-50 dark:bg-green-950 border border-green-200 dark:border-green-800 rounded-md p-3"
+          data-testid="banner-auto-dispatch-result"
+        >
+          <Zap size={14} className="shrink-0 mt-0.5 text-green-600" />
+          <div>
+            <p className="font-medium text-green-800 dark:text-green-200">
+              Auto-dispatch complete — {autoDispatchResult.assignedCount} parcels assigned
+            </p>
+            <ul className="mt-1 space-y-0.5 text-xs text-green-700 dark:text-green-300">
+              {autoDispatchResult.assignments.map((a, i) => (
+                <li key={i}>
+                  {a.clusterLabel}: {a.parcelCount} parcel{a.parcelCount !== 1 ? "s" : ""} → Agent #{a.agentId}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button
+            className="ml-auto text-green-600 hover:text-green-800 text-xs shrink-0"
+            onClick={() => setAutoDispatchResult(null)}
+            data-testid="button-dismiss-auto-dispatch"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* ── Summary stats ────────────────────────────────────────────── */}
       {summary && (

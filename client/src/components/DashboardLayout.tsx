@@ -21,14 +21,14 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, LogOut, Package, Plus, Search, PanelLeft, Truck, ScanBarcode, UserCheck } from "lucide-react";
+import { LayoutDashboard, LogOut, Package, Plus, Search, PanelLeft, Truck, ScanBarcode, UserCheck, Bike, Activity, Camera } from "lucide-react";
 import { LanguageSwitcher } from "./LanguageSwitcher";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from './DashboardLayoutSkeleton';
 import { Button } from "./ui/button";
 
-/** LOG-2 + T-LOG-03 + T-LOG-04 + T-LOG-05 Logistics navigation items */
+/** LOG-2 + T-LOG-03 + T-LOG-04 + T-LOG-05 + Phase 1-3 Logistics navigation items */
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Package, label: "Parcels", path: "/parcels" },
@@ -36,6 +36,9 @@ const menuItems = [
   { icon: Truck, label: "Dispatch", path: "/dispatch" },
   { icon: ScanBarcode, label: "Receiving", path: "/receiving" },
   { icon: UserCheck, label: "Rider KYC", path: "/riders/onboarding" },
+  { icon: Bike, label: "Driver App", path: "/driver" },
+  { icon: Activity, label: "Fleet", path: "/fleet" },
+  { icon: Camera, label: "POD Vault", path: "/pod-vault" },
   { icon: Search, label: "Track", path: "/track" },
 ];
 

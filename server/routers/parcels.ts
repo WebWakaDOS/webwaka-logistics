@@ -26,6 +26,8 @@ import {
   getProofOfDelivery,
   linkParcelToTrip,
   listParcels,
+  listParcelsForAgent,
+  listPodRecords,
   markOtpVerified,
   searchParcels,
   softDeleteParcel,
@@ -684,5 +686,33 @@ export const parcelsRouter = router({
         seatAssignment: "confirmed" as const,
         blockedSeatIds: result.blockedSeatIds,
       };
+    }),
+
+  /**
+   * Driver App: Get all parcels assigned to the authenticated rider.
+   * Returns parcels in all active statuses so the rider can see their full queue.
+   */
+  myDeliveries: agentProcedure
+    .input(z.object({ tenantId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const items = await listParcelsForAgent(input.tenantId, ctx.user.id);
+      return { success: true, data: items };
+    }),
+
+  /**
+   * POD Vault: List all proof-of-delivery records for a tenant.
+   * Joined with parcel info for display purposes.
+   */
+  listPODs: protectedProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        limit: z.number().int().min(1).max(100).default(50),
+        offset: z.number().int().min(0).default(0),
+      }),
+    )
+    .query(async ({ input }) => {
+      const items = await listPodRecords(input.tenantId, input.limit, input.offset);
+      return { success: true, data: items };
     }),
 });

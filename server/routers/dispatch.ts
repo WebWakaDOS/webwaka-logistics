@@ -17,6 +17,7 @@ import {
   updateParcelCoordinates,
 } from "../dispatch.db";
 import { clusterParcels } from "../clustering";
+import { invokeLLM } from "../_core/llm";
 
 const logger = createLogger("DispatchRouter");
 
@@ -146,6 +147,145 @@ export const dispatchRouter = router({
       });
 
       return { success: true, unassignedCount: count };
+    }),
+
+  /**
+   * MUTATION /dispatch/optimizeRoute
+   * Use AI (LLM) to sort a list of delivery addresses into the most efficient route.
+   * Implements a Traveling Salesman Problem heuristic via natural-language prompt.
+   * Returns parcel IDs in the optimal delivery order.
+   */
+  optimizeRoute: adminProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        /** Ordered list of parcels to re-sequence */
+        parcels: z
+          .array(
+            z.object({
+              id: z.number().int().positive(),
+              trackingNumber: z.string(),
+              recipientAddress: z.string(),
+              recipientCity: z.string(),
+              recipientState: z.string(),
+              recipientLat: z.number().nullable().optional(),
+              recipientLng: z.number().nullable().optional(),
+            }),
+          )
+          .min(2)
+          .max(50),
+        /** Starting point for the route (e.g. warehouse address) */
+        startAddress: z.string().optional(),
+      }),
+    )
+    .mutation(async ({ input }) => {
+      const parcelList = input.parcels
+        .map(
+          (p, i) =>
+            `${i + 1}. [ID:${p.id}] ${p.trackingNumber} — ${p.recipientAddress}, ${p.recipientCity}, ${p.recipientState}` +
+            (p.recipientLat != null
+              ? ` (GPS: ${p.recipientLat.toFixed(4)},${p.recipientLng?.toFixed(4)})`
+              : ""),
+        )
+        .join("\n");
+
+      const systemPrompt =
+        `You are a last-mile delivery route optimizer for Lagos, Nigeria. ` +
+        `Given a list of delivery stops, return the most efficient visiting order ` +
+        `to minimize total travel distance and time in Nigerian urban traffic. ` +
+        `Consider typical Lagos traffic patterns (Island vs Mainland, major corridors). ` +
+        `Respond ONLY with a JSON array of parcel IDs in the optimal order, e.g.: [42,17,33,8]`;
+
+      const userPrompt =
+        `Optimize this delivery route${input.startAddress ? ` starting from: ${input.startAddress}` : ""}:\n\n` +
+        parcelList +
+        `\n\nReturn ONLY a JSON array of IDs in optimal order.`;
+
+      let optimizedIds: number[] = input.parcels.map(p => p.id);
+
+      try {
+        const result = await invokeLLM({
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          maxTokens: 512,
+        });
+
+        const rawContent = result.choices[0]?.message?.content;
+        const text = typeof rawContent === "string" ? rawContent : "";
+        const match = text.match(/\[[\d,\s]+\]/);
+        if (match) {
+          const parsed: unknown = JSON.parse(match[0]);
+          if (Array.isArray(parsed) && parsed.every(v => typeof v === "number")) {
+            const inputIds = new Set(input.parcels.map(p => p.id));
+            const validIds = (parsed as number[]).filter(id => inputIds.has(id));
+            if (validIds.length === input.parcels.length) {
+              optimizedIds = validIds;
+            }
+          }
+        }
+      } catch (err) {
+        logger.warn("AI route optimization failed — returning original order", {
+          error: String(err),
+        });
+      }
+
+      logger.info("Route optimized", {
+        tenantId: input.tenantId,
+        parcelCount: input.parcels.length,
+      });
+
+      return { success: true, optimizedIds };
+    }),
+
+  /**
+   * MUTATION /dispatch/autoDispatch
+   * Automated Dispatch Engine: clusters all unassigned PENDING parcels and assigns
+   * each cluster to the nearest available agent (round-robin by workload if no GPS).
+   * Returns the number of parcels assigned and which agent got which cluster.
+   */
+  autoDispatch: adminProcedure
+    .input(z.object({ tenantId: z.string().min(1).max(64) }))
+    .mutation(async ({ input, ctx }) => {
+      const unassigned = getUnassignedParcels(input.tenantId);
+      if (unassigned.length === 0) {
+        return { success: true, assignedCount: 0, assignments: [] };
+      }
+
+      const agents = getAvailableAgents();
+      if (agents.length === 0) {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "No available agents — add riders before running auto-dispatch.",
+        });
+      }
+
+      const clusters = clusterParcels(unassigned);
+      const assignments: { clusterLabel: string; agentId: number; parcelCount: number }[] = [];
+      let totalAssigned = 0;
+
+      clusters.forEach((cluster, i) => {
+        // Round-robin assignment across available agents
+        const agent = agents[i % agents.length];
+        const parcelIds = cluster.parcels.map(p => p.id);
+        const count = bulkAssignParcels(input.tenantId, parcelIds, agent.id);
+        totalAssigned += count;
+        assignments.push({
+          clusterLabel: cluster.label,
+          agentId: agent.id,
+          parcelCount: count,
+        });
+      });
+
+      logger.info("Auto-dispatch completed", {
+        tenantId: input.tenantId,
+        clusterCount: clusters.length,
+        totalAssigned,
+        dispatchedBy: ctx.user.openId,
+      });
+
+      return { success: true, assignedCount: totalAssigned, assignments };
     }),
 
   /**

@@ -324,6 +324,77 @@ export async function markOtpVerified(tenantId: string, parcelId: number): Promi
 // P12: Transport Integration Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Driver App: Agent delivery queue helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetch all parcels assigned to a specific agent that are in an active delivery state.
+ * Used by the Driver App page for the rider's current delivery queue.
+ */
+export async function listParcelsForAgent(tenantId: string, agentId: number) {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  return db
+    .select()
+    .from(parcels)
+    .where(
+      and(
+        eq(parcels.tenantId, tenantId),
+        eq(parcels.assignedAgentId, agentId),
+        isNull(parcels.deletedAt),
+      ),
+    )
+    .orderBy(desc(parcels.updatedAt))
+    .all();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POD Vault: bulk proof-of-delivery listing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * List recent proof-of-delivery records for a tenant, joined with parcel info.
+ * Used by the POD Vault page.
+ */
+export async function listPodRecords(
+  tenantId: string,
+  limit = 50,
+  offset = 0,
+) {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  return db
+    .select({
+      id: proofOfDelivery.id,
+      parcelId: proofOfDelivery.parcelId,
+      tenantId: proofOfDelivery.tenantId,
+      imageUrl: proofOfDelivery.imageUrl,
+      signatureUrl: proofOfDelivery.signatureUrl,
+      receivedByName: proofOfDelivery.receivedByName,
+      receivedByRelation: proofOfDelivery.receivedByRelation,
+      createdAt: proofOfDelivery.createdAt,
+      trackingNumber: parcels.trackingNumber,
+      recipientName: parcels.recipientName,
+      recipientAddress: parcels.recipientAddress,
+      recipientCity: parcels.recipientCity,
+    })
+    .from(proofOfDelivery)
+    .leftJoin(parcels, eq(proofOfDelivery.parcelId, parcels.id))
+    .where(
+      and(
+        eq(proofOfDelivery.tenantId, tenantId),
+        isNull(proofOfDelivery.deletedAt),
+      ),
+    )
+    .orderBy(desc(proofOfDelivery.createdAt))
+    .limit(limit)
+    .offset(offset)
+    .all();
+}
+
 /**
  * Links a parcel to a transport trip and sets seatAssignmentStatus to "pending".
  * Called before publishing parcel.seats_required to the transport service.

@@ -154,6 +154,22 @@ function runMigrations(sqlite: Database.Database) {
       // Column already exists — safe to ignore
     }
   }
+
+  // Fleet Telemetry: rider last-known GPS positions (idempotent)
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS rider_locations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      userId INTEGER NOT NULL UNIQUE,
+      tenantId TEXT NOT NULL,
+      lat REAL NOT NULL,
+      lng REAL NOT NULL,
+      speedKmh REAL,
+      accuracyM REAL,
+      reportedAt INTEGER NOT NULL,
+      statusLabel TEXT NOT NULL DEFAULT 'Active',
+      updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
+    );
+  `);
 }
 
 export { getDb };
