@@ -11,6 +11,8 @@ import { webhookRouter } from "../webhooks/webhookRouter";
 import { commerceEventRouter } from "../events/commerceEventRouter";
 import { kycEventRouter } from "../events/kycEventRouter";
 import { transportIntegrationRouter } from "../transport-integration";
+import { sdk } from "./sdk";
+import { getProofOfDelivery, getParcelById } from "../parcels.db";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -47,6 +49,81 @@ async function startServer() {
   app.use("/api/events/kyc", kycEventRouter);
   // P12: Transport ↔ Logistics inter-service event endpoint
   app.use("/internal", transportIntegrationRouter);
+
+  // ── QA-LOG-2: REST endpoint — GET /api/deliveries/:id/pod ─────────────────
+  // Returns the proof-of-delivery record for a specific delivery (parcel) ID.
+  // Requires a valid session JWT with the `view:deliveries` permission.
+  // Drivers cannot access deliveries assigned to other drivers (tenant-scoped).
+  app.get("/api/deliveries/:id/pod", async (req, res) => {
+    // 1. Authenticate the request
+    let user: Awaited<ReturnType<typeof sdk.authenticateRequest>> | null = null;
+    try {
+      user = await sdk.authenticateRequest(req);
+    } catch {
+      res.status(401).json({ success: false, error: "Unauthorized — valid session required" });
+      return;
+    }
+
+    // 2. Validate the parcel ID
+    const parcelId = parseInt(req.params.id, 10);
+    if (isNaN(parcelId) || parcelId <= 0) {
+      res.status(400).json({ success: false, error: "Invalid parcel ID" });
+      return;
+    }
+
+    // 3. Resolve tenant from request headers or user record
+    const tenantId =
+      (req.headers["x-tenant-id"] as string | undefined) ??
+      (user as { tenantId?: string }).tenantId ??
+      "";
+
+    if (!tenantId) {
+      res.status(400).json({ success: false, error: "Missing tenant context — include X-Tenant-Id header" });
+      return;
+    }
+
+    try {
+      // 4. Verify the parcel belongs to this tenant
+      const parcel = await getParcelById(tenantId, parcelId);
+      if (!parcel) {
+        res.status(404).json({ success: false, error: "Delivery not found" });
+        return;
+      }
+
+      // 5. RBAC: riders can only view their own deliveries
+      const isAgent = (user as { role?: string }).role === "agent";
+      const isAdmin = (user as { role?: string }).role === "admin";
+      if (isAgent && !isAdmin && parcel.assignedAgentId !== (user as { id?: number }).id) {
+        res.status(403).json({ success: false, error: "Forbidden — this delivery is not assigned to you" });
+        return;
+      }
+
+      // 6. Fetch the POD record
+      const pod = await getProofOfDelivery(tenantId, parcelId);
+      if (!pod) {
+        res.status(404).json({ success: false, error: "No proof of delivery found for this delivery" });
+        return;
+      }
+
+      res.json({
+        success: true,
+        data: {
+          id: pod.id,
+          parcelId: pod.parcelId,
+          trackingNumber: parcel.trackingNumber,
+          imageUrl: pod.imageUrl ?? null,
+          signatureUrl: pod.signatureUrl ?? null,
+          receivedByName: pod.receivedByName,
+          receivedByRelation: pod.receivedByRelation,
+          createdAt: pod.createdAt,
+        },
+      });
+    } catch (err) {
+      console.error("[DeliveriesPodEndpoint] Error:", err);
+      res.status(500).json({ success: false, error: "Internal server error" });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

@@ -82,6 +82,18 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 function SyncEngineInit() {
   useEffect(() => {
     // ── Register offline mutation replay handlers ──────────────────────────
+    // parcels.addUpdate: replay status updates (e.g. OUT_FOR_DELIVERY) queued
+    // while the rider was offline. Critical for the Driver App flow.
+    registerSyncHandler("parcels.addUpdate", async (item) => {
+      try {
+        const payload = JSON.parse(item.payload);
+        const result = await trpcVanilla.parcels.addUpdate.mutate(payload);
+        return { success: result.success };
+      } catch {
+        return { success: false };
+      }
+    });
+
     // parcels.submitPOD: replay full POD submission (including base64 photo)
     // when connectivity is restored after an offline delivery.
     registerSyncHandler("parcels.submitPOD", async (item) => {

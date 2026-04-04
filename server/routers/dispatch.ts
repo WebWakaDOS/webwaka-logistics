@@ -17,7 +17,7 @@ import {
   updateParcelCoordinates,
 } from "../dispatch.db";
 import { clusterParcels } from "../clustering";
-import { invokeLLM } from "../_core/llm";
+import { getAICompletion } from "../_core/aiRouting";
 
 const logger = createLogger("DispatchRouter");
 
@@ -179,64 +179,27 @@ export const dispatchRouter = router({
       }),
     )
     .mutation(async ({ input }) => {
-      const parcelList = input.parcels
-        .map(
-          (p, i) =>
-            `${i + 1}. [ID:${p.id}] ${p.trackingNumber} — ${p.recipientAddress}, ${p.recipientCity}, ${p.recipientState}` +
-            (p.recipientLat != null
-              ? ` (GPS: ${p.recipientLat.toFixed(4)},${p.recipientLng?.toFixed(4)})`
-              : ""),
-        )
-        .join("\n");
+      const stops = input.parcels.map(p => ({
+        id: p.id,
+        label: p.trackingNumber,
+        address: p.recipientAddress,
+        city: p.recipientCity,
+        state: p.recipientState,
+        lat: p.recipientLat ?? null,
+        lng: p.recipientLng ?? null,
+      }));
 
-      const systemPrompt =
-        `You are a last-mile delivery route optimizer for Lagos, Nigeria. ` +
-        `Given a list of delivery stops, return the most efficient visiting order ` +
-        `to minimize total travel distance and time in Nigerian urban traffic. ` +
-        `Consider typical Lagos traffic patterns (Island vs Mainland, major corridors). ` +
-        `Respond ONLY with a JSON array of parcel IDs in the optimal order, e.g.: [42,17,33,8]`;
-
-      const userPrompt =
-        `Optimize this delivery route${input.startAddress ? ` starting from: ${input.startAddress}` : ""}:\n\n` +
-        parcelList +
-        `\n\nReturn ONLY a JSON array of IDs in optimal order.`;
-
-      let optimizedIds: number[] = input.parcels.map(p => p.id);
-
-      try {
-        const result = await invokeLLM({
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          maxTokens: 512,
-        });
-
-        const rawContent = result.choices[0]?.message?.content;
-        const text = typeof rawContent === "string" ? rawContent : "";
-        const match = text.match(/\[[\d,\s]+\]/);
-        if (match) {
-          const parsed: unknown = JSON.parse(match[0]);
-          if (Array.isArray(parsed) && parsed.every(v => typeof v === "number")) {
-            const inputIds = new Set(input.parcels.map(p => p.id));
-            const validIds = (parsed as number[]).filter(id => inputIds.has(id));
-            if (validIds.length === input.parcels.length) {
-              optimizedIds = validIds;
-            }
-          }
-        }
-      } catch (err) {
-        logger.warn("AI route optimization failed — returning original order", {
-          error: String(err),
-        });
-      }
+      const { optimizedIds, aiSucceeded } = await getAICompletion(stops, {
+        startAddress: input.startAddress,
+      });
 
       logger.info("Route optimized", {
         tenantId: input.tenantId,
         parcelCount: input.parcels.length,
+        aiSucceeded,
       });
 
-      return { success: true, optimizedIds };
+      return { success: true, optimizedIds, aiSucceeded };
     }),
 
   /**
