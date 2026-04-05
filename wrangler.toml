@@ -3,9 +3,10 @@ main = "src/worker.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
 
+# ─── Default (Development) Environment ───────────────────────────────────────
 [vars]
-ENVIRONMENT = "production"
-LOGISTICS_PORTAL_URL = "https://logistics.webwaka.ng"
+ENVIRONMENT = "development"
+LOGISTICS_PORTAL_URL = "http://localhost:5173"
 
 [[d1_databases]]
 binding = "DB"
@@ -22,15 +23,36 @@ id = "ed98b167646d4469a4f03a2c9ab95781"
 
 [[r2_buckets]]
 binding = "STORAGE"
-bucket_name = "webwaka-logistics-storage"
+bucket_name = "webwaka-logistics-storage-dev"
 
-# ============================================================
-# Production environment
-# ============================================================
+# ─── Staging Environment ──────────────────────────────────────────────────────
+[env.staging]
+name = "webwaka-logistics-api-staging"
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+LOGISTICS_PORTAL_URL = "https://logistics-staging.webwaka.ng"
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "webwaka-logistics-db-staging"
+database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
+
+[[env.staging.kv_namespaces]]
+binding = "SESSIONS_KV"
+id = "ef463888d10e487ba4fe3563f7f71964"
+
+[[env.staging.kv_namespaces]]
+binding = "EVENTS"
+id = "ed98b167646d4469a4f03a2c9ab95781"
+
+[[env.staging.r2_buckets]]
+binding = "STORAGE"
+bucket_name = "webwaka-logistics-storage-staging"
+
+# ─── Production Environment ───────────────────────────────────────────────────
 [env.production]
 name = "webwaka-logistics-api-prod"
-compatibility_date = "2024-12-01"
-compatibility_flags = ["nodejs_compat"]
 
 [env.production.vars]
 ENVIRONMENT = "production"
@@ -41,14 +63,27 @@ binding = "DB"
 database_name = "webwaka-logistics-db-prod"
 database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
 
+# NOTE: SESSIONS_KV and EVENTS KV IDs below are DIFFERENT from staging/dev.
+# Create production KV namespaces via:
+#   wrangler kv:namespace create SESSIONS_KV --env production
+#   wrangler kv:namespace create EVENTS --env production
+# Then replace the placeholder IDs below with the real ones.
 [[env.production.kv_namespaces]]
 binding = "SESSIONS_KV"
-id = "ef463888d10e487ba4fe3563f7f71964"
+id = "REPLACE_WITH_PRODUCTION_SESSIONS_KV_ID"
 
 [[env.production.kv_namespaces]]
 binding = "EVENTS"
-id = "ed98b167646d4469a4f03a2c9ab95781"
+id = "REPLACE_WITH_PRODUCTION_EVENTS_KV_ID"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-logistics-storage"
+
+# ─── Secrets (set via: wrangler secret put <KEY> --env <staging|production>) ──
+# JWT_SECRET              — HS256 signing secret for user JWTs
+# INTER_SERVICE_SECRET    — shared secret for inter-service calls (commerce → logistics)
+# GIG_WEBHOOK_SECRET      — HMAC secret for GIG courier webhook verification
+# KWIK_WEBHOOK_SECRET     — HMAC secret for Kwik courier webhook verification
+# SENDBOX_WEBHOOK_SECRET  — HMAC secret for Sendbox courier webhook verification
+# TRACKING_SECRET         — HMAC-SHA256 secret for signing tracking tokens (T-CVC-02)
