@@ -432,9 +432,15 @@ app.get('/health', (c) => c.json({ ok: true, service: 'webwaka-logistics-api', t
 // Admin: Run Migrations
 // ============================================================
 app.post('/api/admin/migrations/run', async (c) => {
+  // Security fix: use INTER_SERVICE_SECRET for admin operations, NOT JWT_SECRET.
+  // JWT_SECRET is for end-user auth only. Sharing it for admin ops would allow
+  // any user who extracts their token secret to trigger migrations.
   const authHeader = c.req.header('Authorization');
-  const secret = c.env.JWT_SECRET ?? '';
-  if (!authHeader || authHeader !== `Bearer ${secret}`) {
+  const adminSecret = (c.env as unknown as { INTER_SERVICE_SECRET?: string }).INTER_SERVICE_SECRET ?? '';
+  if (!adminSecret) {
+    return c.json({ success: false, error: 'Admin auth not configured' }, 503);
+  }
+  if (!authHeader || authHeader !== `Bearer ${adminSecret}`) {
     return c.json({ success: false, error: 'Unauthorized' }, 401);
   }
   await runMigrations(c.env.DB);
@@ -452,7 +458,7 @@ const PUBLIC_ROUTES = [
   { method: 'POST', path: '/api/webhooks/sendbox' },
   { method: 'POST', path: '/api/events/commerce' },
   { method: 'POST', path: '/internal/transport-events' },
-  { method: 'POST', path: '/api/admin/migrations/run' },
+  // NOTE: /api/admin/migrations/run is NOT in PUBLIC_ROUTES — it uses INTER_SERVICE_SECRET bearer auth
   // T-CVC-01: Delivery zones are public — Commerce checkout queries these without JWT
   { method: 'GET', path: '/api/delivery-zones' },
   { method: 'GET', path: '/api/delivery-zones/estimate' },
