@@ -125,6 +125,48 @@ drizzle/         Database schema and migrations
 - `server/routers/fleet.ts` — `reportLocation` (agentProcedure), `getActiveRiders` (protectedProcedure)
 - Geofencing: when a rider reports GPS within 1 km of an OUT_FOR_DELIVERY parcel, Termii SMS fires to the customer
 
+## Phase 1 Security & Enhancement Fixes
+
+### TASK-01: CI/CD Workflows — npm migration
+All 4 GitHub Actions workflows (test.yml, preview-pr.yml, deploy-prod.yml, deploy-staging.yml) converted from pnpm to npm. Removed `pnpm/action-setup` step and replaced `pnpm install --frozen-lockfile` with `npm ci`. All `pnpm run *` replaced with `npm run *`.
+
+### TASK-02: Remove Manus Runtime Artifact
+Removed `localStorage.setItem("manus-runtime-user-info", ...)` from `client/src/_core/hooks/useAuth.ts` — leaked authenticated user data to Manus runtime inspection tools.
+
+### TASK-03: IN_WAREHOUSE Status Transition Fix
+Added `IN_WAREHOUSE: ["IN_TRANSIT", "FAILED"]` to `VALID_TRANSITIONS` in `server/parcels.utils.ts` and added `IN_WAREHOUSE` as a valid exit from `COLLECTED`. Fixes warehouse receiving scanner (T-LOG-04) which was generating invalid transition errors.
+
+### TASK-04: HMAC Webhook Signature Verification
+All three webhook providers now verify HMAC-SHA256 signatures using `crypto.timingSafeEqual` (timing-safe comparison). Raw request body is captured before JSON parsing in `server/_core/index.ts` and stored as `req.rawBody`. Providers:
+- GIG: `x-gig-signature` header
+- Kwik: `x-kwik-token` header
+- Sendbox: `x-sendbox-webhook-secret` header
+
+### TASK-05: Rate Limiting
+Added `express-rate-limit` package. `server/_core/rateLimit.ts` defines four limiters:
+- Public tracking: 30 req/min
+- Auth (OAuth): 10 req/min
+- tRPC: 100 req/min
+- General API: 200 req/min
+Real IP resolved via `CF-Connecting-IP` → `X-Forwarded-For` → `req.ip` chain.
+
+### TASK-07: Dedicated Stats Endpoint
+Added `getParcelStats(tenantId)` to `server/parcels.db.ts` — single `GROUP BY status` query replacing the previous `limit:100` list-then-count pattern. New `parcels.stats` tRPC procedure. `Home.tsx` updated to use the stats endpoint.
+
+### TASK-08: Cursor-Based Pagination
+Added `listParcelsCursor(tenantId, limit, cursor?)` to `server/parcels.db.ts` — keyset/cursor pagination using `id < cursor` instead of `OFFSET`. New `parcels.listCursor` tRPC procedure. `ParcelsList.tsx` updated with "Load More" button using accumulated state.
+
+### TASK-09: Fix Dispatch Agent Assignment
+Verified already fixed: `Dispatch.tsx` uses `trpc.dispatch.getAgents.useQuery()` and passes selected `agentId` to `assignCluster`. No hardcoded values remain.
+
+### TASK-11: CSRF Protection
+- Changed `sameSite: "none"` → `sameSite: "strict"` in `server/_core/cookies.ts`
+- Added origin validation middleware in `server/_core/index.ts` for all non-GET/non-webhook/non-OAuth routes. Rejects cross-origin mutating requests (403) unless origin matches host or `ALLOWED_ORIGINS` env var.
+
+### TASK-12: Replace Math.random() with Crypto
+- `generateTrackingNumber()` in `server/parcels.db.ts` now uses `crypto.randomBytes(4).toString("hex")` — no more `Math.random()`
+- `generateOtp()` in `server/otp.ts` range fixed from `randomInt(1000, 10000)` → `randomInt(0, 10000).padStart(4, "0")` — enables leading-zero OTPs (0000–0999)
+
 ## Migration Notes (Replit)
 
 - Removed `@builder.io/vite-plugin-jsx-loc` (incompatible with Vite 7) and `vite-plugin-manus-runtime` (Manus-specific)

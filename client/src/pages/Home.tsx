@@ -2,12 +2,14 @@
  * Dashboard Home Page [Part 10.4]
  * Summary statistics and quick actions for logistics staff.
  * Mobile-first: card grid, large touch targets.
+ * TASK-07: Stats loaded via dedicated COUNT query instead of limit:100 fetch.
  */
 
 import { useLocation } from "wouter";
 import { Package, Truck, CheckCircle2, Clock, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useI18n } from "@/contexts/I18nContext";
 import { useTenantId } from "@/hooks/useTenantId";
 import { trpc } from "@/lib/trpc";
@@ -20,20 +22,18 @@ export default function Home() {
   const tenantId = useTenantId();
   const [, setLocation] = useLocation();
 
-  const { data: listData } = trpc.parcels.list.useQuery(
-    { tenantId, limit: 100, offset: 0 },
+  const { data: statsData, isLoading: statsLoading } = trpc.parcels.stats.useQuery(
+    { tenantId },
     { enabled: isAuthenticated }
   );
 
-  const parcels = listData?.data ?? [];
+  const { data: recentData } = trpc.parcels.listCursor.useQuery(
+    { tenantId, limit: 5 },
+    { enabled: isAuthenticated }
+  );
 
-  // Compute summary stats
-  const stats = {
-    total: parcels.length,
-    pending: parcels.filter(p => p.status === "PENDING").length,
-    inTransit: parcels.filter(p => ["IN_TRANSIT", "OUT_FOR_DELIVERY", "COLLECTED"].includes(p.status)).length,
-    delivered: parcels.filter(p => p.status === "DELIVERED").length,
-  };
+  const stats = statsData?.data ?? { total: 0, pending: 0, inTransit: 0, delivered: 0 };
+  const recentParcels = recentData?.data ?? [];
 
   if (loading) {
     return (
@@ -56,6 +56,7 @@ export default function Home() {
             size="lg"
             className="flex-1 bg-white text-blue-700 hover:bg-blue-50 font-semibold"
             onClick={() => window.location.href = getLoginUrl()}
+            data-testid="button-sign-in"
           >
             Sign In
           </Button>
@@ -64,6 +65,7 @@ export default function Home() {
             variant="outline"
             className="flex-1 border-white text-white hover:bg-white/10"
             onClick={() => setLocation("/track")}
+            data-testid="button-track-parcel"
           >
             <Search className="h-4 w-4 mr-2" />
             Track Parcel
@@ -77,7 +79,7 @@ export default function Home() {
     <div className="space-y-6">
       {/* Welcome */}
       <div>
-        <h1 className="text-xl font-semibold text-foreground">
+        <h1 className="text-xl font-semibold text-foreground" data-testid="text-dashboard-title">
           {t.dashboard}
         </h1>
         <p className="text-sm text-muted-foreground">
@@ -86,7 +88,7 @@ export default function Home() {
       </div>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3" data-testid="stats-grid">
         <Card>
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-3">
@@ -94,7 +96,11 @@ export default function Home() {
                 <Package className="h-5 w-5 text-blue-700" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.total}</p>
+                {statsLoading ? (
+                  <Skeleton className="h-7 w-10 mb-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-foreground" data-testid="stat-total">{stats.total}</p>
+                )}
                 <p className="text-xs text-muted-foreground">{t.parcels}</p>
               </div>
             </div>
@@ -107,7 +113,11 @@ export default function Home() {
                 <Clock className="h-5 w-5 text-yellow-700" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.pending}</p>
+                {statsLoading ? (
+                  <Skeleton className="h-7 w-10 mb-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-foreground" data-testid="stat-pending">{stats.pending}</p>
+                )}
                 <p className="text-xs text-muted-foreground">{t.PENDING}</p>
               </div>
             </div>
@@ -120,7 +130,11 @@ export default function Home() {
                 <Truck className="h-5 w-5 text-indigo-700" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.inTransit}</p>
+                {statsLoading ? (
+                  <Skeleton className="h-7 w-10 mb-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-foreground" data-testid="stat-in-transit">{stats.inTransit}</p>
+                )}
                 <p className="text-xs text-muted-foreground">{t.IN_TRANSIT}</p>
               </div>
             </div>
@@ -133,7 +147,11 @@ export default function Home() {
                 <CheckCircle2 className="h-5 w-5 text-green-700" aria-hidden="true" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-foreground">{stats.delivered}</p>
+                {statsLoading ? (
+                  <Skeleton className="h-7 w-10 mb-1" />
+                ) : (
+                  <p className="text-2xl font-bold text-foreground" data-testid="stat-delivered">{stats.delivered}</p>
+                )}
                 <p className="text-xs text-muted-foreground">{t.DELIVERED}</p>
               </div>
             </div>
@@ -147,6 +165,7 @@ export default function Home() {
           size="lg"
           className="h-14 gap-2 flex-col text-xs"
           onClick={() => setLocation("/parcels/new")}
+          data-testid="button-new-parcel"
         >
           <Plus className="h-5 w-5" />
           {t.newParcel}
@@ -156,6 +175,7 @@ export default function Home() {
           variant="outline"
           className="h-14 gap-2 flex-col text-xs"
           onClick={() => setLocation("/track")}
+          data-testid="button-track"
         >
           <Search className="h-5 w-5" />
           {t.track}
@@ -163,22 +183,23 @@ export default function Home() {
       </div>
 
       {/* Recent parcels */}
-      {parcels.length > 0 && (
+      {recentParcels.length > 0 && (
         <div>
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
               Recent Parcels
             </h2>
-            <Button variant="ghost" size="sm" onClick={() => setLocation("/parcels")}>
+            <Button variant="ghost" size="sm" onClick={() => setLocation("/parcels")} data-testid="link-view-all">
               View all
             </Button>
           </div>
           <div className="space-y-2">
-            {parcels.slice(0, 5).map(parcel => (
+            {recentParcels.map(parcel => (
               <button
                 key={parcel.id}
                 className="w-full text-left"
                 onClick={() => setLocation(`/parcels/${parcel.trackingNumber}`)}
+                data-testid={`card-recent-parcel-${parcel.id}`}
               >
                 <Card className="hover:shadow-sm transition-shadow">
                   <CardContent className="py-3 px-4">
@@ -196,7 +217,7 @@ export default function Home() {
                         parcel.status === "IN_TRANSIT" ? "bg-indigo-100 text-indigo-800" :
                         parcel.status === "PENDING" ? "bg-yellow-100 text-yellow-800" :
                         "bg-gray-100 text-gray-800"
-                      }`}>
+                      }`} data-testid={`status-recent-${parcel.id}`}>
                         {t[parcel.status as keyof typeof t] ?? parcel.status}
                       </span>
                     </div>

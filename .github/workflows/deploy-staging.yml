@@ -13,19 +13,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
       - name: Run unit tests
-        run: pnpm run test
+        run: npm run test
 
   # ============================================================================
   # WORKER DEPLOY (Staging)
@@ -36,17 +32,13 @@ jobs:
     needs: [test]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
       - name: Apply D1 Migrations (Staging)
         run: |
           echo "Applying D1 migrations to staging..."
@@ -77,19 +69,15 @@ jobs:
     needs: [test]
     steps:
       - uses: actions/checkout@v4
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'pnpm'
+          cache: 'npm'
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
       - name: Build PWA (Vite)
-        run: pnpm run build:ui
+        run: npm run build
         env:
           VITE_API_BASE: https://webwaka-logistics-api-staging.webwaka.workers.dev
           VITE_TENANT_ID: tnt_demo

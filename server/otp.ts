@@ -23,11 +23,11 @@ const OFFLINE_HMAC_KEY = process.env.OTP_OFFLINE_SECRET ?? "webwaka-logistics-of
 
 /**
  * Generate a cryptographically random 4-digit OTP using Node.js crypto.randomInt.
- * Range: 1000–9999 (inclusive) — always 4 digits, no leading zeros.
+ * Range: 0000–9999 (inclusive) — zero-padded to 4 digits so codes like "0042" are valid.
  * crypto.randomInt is CSPRNG-backed: suitable for security-sensitive one-time codes.
  */
 export function generateOtp(): string {
-  return String(randomInt(1000, 10000));
+  return String(randomInt(0, 10000)).padStart(4, "0");
 }
 
 /**

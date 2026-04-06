@@ -1,8 +1,10 @@
 /**
  * Kwik Delivery Webhook Handler [P04 — TASK 4]
  * Maps Kwik-specific status codes to canonical WebWaka statuses.
+ * HMAC-SHA256 signature verification (BUG-07 fix).
  */
 
+import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response } from "express";
 import type { CanonicalDeliveryStatus } from "@webwaka/core";
 import { CommerceEvents } from "@webwaka/core";
@@ -12,7 +14,6 @@ import { publishCommerceEvent } from "../../events/commerceEventBus";
 
 const logger = createLogger("KwikWebhook");
 
-// Kwik status → canonical
 const KWIK_STATUS_MAP: Record<string, CanonicalDeliveryStatus> = {
   pending: "PENDING",
   assigned: "PENDING",
@@ -25,18 +26,35 @@ const KWIK_STATUS_MAP: Record<string, CanonicalDeliveryStatus> = {
 };
 
 function verifyKwikSignature(req: Request): boolean {
-  const signature = req.headers["x-kwik-token"];
   const secret = process.env.KWIK_WEBHOOK_SECRET;
   if (!secret) {
-    logger.warn("[Kwik] KWIK_WEBHOOK_SECRET not set — skipping signature verification");
-    return true;
+    if (process.env.NODE_ENV !== "production") {
+      logger.warn("[Kwik] KWIK_WEBHOOK_SECRET not set — skipping verification in dev");
+      return true;
+    }
+    logger.warn("[Kwik] KWIK_WEBHOOK_SECRET not configured in production — rejecting request");
+    return false;
   }
-  return signature === secret;
+
+  const signature = req.headers["x-kwik-token"] as string | undefined;
+  if (!signature) {
+    logger.warn("[Kwik] Missing x-kwik-token header");
+    return false;
+  }
+
+  const rawBody: Buffer = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+
+  try {
+    return timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"));
+  } catch {
+    return false;
+  }
 }
 
 export async function handleKwikWebhook(req: Request, res: Response): Promise<void> {
   if (!verifyKwikSignature(req)) {
-    logger.warn("[Kwik] Invalid webhook signature");
+    logger.warn("[Kwik] Invalid or missing webhook signature");
     res.status(401).json({ error: "Invalid signature" });
     return;
   }

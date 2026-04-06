@@ -5,7 +5,8 @@
  * Soft deletes enforced via deletedAt IS NULL filters.
  */
 
-import { and, desc, eq, isNull, like } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { and, count, desc, eq, isNull, like, sql } from "drizzle-orm";
 import {
   InsertParcel,
   InsertParcelUpdate,
@@ -27,11 +28,12 @@ const logger = createLogger("ParcelsDB");
 /**
  * Generate a unique tracking number in the format WW-{YYYYMMDD}-{6-char-random}.
  * Nigeria First: prefix "WW" for WebWaka, date-stamped for traceability.
+ * Uses crypto.randomBytes (CSPRNG) — no Math.random().
  */
 export function generateTrackingNumber(): string {
   const now = new Date();
   const date = now.toISOString().slice(0, 10).replace(/-/g, "");
-  const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+  const random = randomBytes(4).toString("hex").toUpperCase().slice(0, 6);
   return `WW-${date}-${random}`;
 }
 
@@ -73,6 +75,77 @@ export async function listParcels(tenantId: string, limit = 50, offset = 0) {
     .limit(limit)
     .offset(offset)
     .all();
+}
+
+/**
+ * Cursor-based paginated parcel list.
+ * Returns up to `limit` parcels created before `cursor` (parcel id, descending).
+ * Returns nextCursor for the next page, or null when exhausted.
+ */
+export async function listParcelsCursor(
+  tenantId: string,
+  limit = 30,
+  cursor?: number,
+): Promise<{ items: Awaited<ReturnType<typeof listParcels>>; nextCursor: number | null }> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  const conditions = [eq(parcels.tenantId, tenantId), isNull(parcels.deletedAt)];
+  if (cursor !== undefined) {
+    conditions.push(sql`${parcels.id} < ${cursor}`);
+  }
+
+  const items = db
+    .select()
+    .from(parcels)
+    .where(and(...conditions))
+    .orderBy(desc(parcels.id))
+    .limit(limit + 1)
+    .all();
+
+  const hasMore = items.length > limit;
+  const page = hasMore ? items.slice(0, limit) : items;
+  const nextCursor = hasMore ? (page[page.length - 1]?.id ?? null) : null;
+
+  return { items: page, nextCursor };
+}
+
+/**
+ * Aggregate parcel counts by status for the dashboard stats widget.
+ * Returns total, pending, inTransit, and delivered counts in a single DB query.
+ */
+export async function getParcelStats(tenantId: string): Promise<{
+  total: number;
+  pending: number;
+  inTransit: number;
+  delivered: number;
+}> {
+  const db = getDb();
+  if (!db) throw new Error("Database unavailable");
+
+  const rows = db
+    .select({ status: parcels.status, count: count() })
+    .from(parcels)
+    .where(and(eq(parcels.tenantId, tenantId), isNull(parcels.deletedAt)))
+    .groupBy(parcels.status)
+    .all();
+
+  const TRANSIT_STATUSES = new Set(["IN_TRANSIT", "OUT_FOR_DELIVERY", "COLLECTED", "IN_WAREHOUSE"]);
+
+  let total = 0;
+  let pending = 0;
+  let inTransit = 0;
+  let delivered = 0;
+
+  for (const row of rows) {
+    const n = Number(row.count);
+    total += n;
+    if (row.status === "PENDING") pending += n;
+    else if (TRANSIT_STATUSES.has(row.status ?? "")) inTransit += n;
+    else if (row.status === "DELIVERED") delivered += n;
+  }
+
+  return { total, pending, inTransit, delivered };
 }
 
 export async function getParcelByTracking(tenantId: string, trackingNumber: string) {

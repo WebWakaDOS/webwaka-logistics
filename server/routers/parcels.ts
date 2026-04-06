@@ -23,9 +23,11 @@ import {
   getParcelByTrackingPublic,
   getParcelUpdates,
   getParcelUpdatesPublic,
+  getParcelStats,
   getProofOfDelivery,
   linkParcelToTrip,
   listParcels,
+  listParcelsCursor,
   listParcelsForAgent,
   listPodRecords,
   markOtpVerified,
@@ -170,6 +172,34 @@ export const parcelsRouter = router({
     .query(async ({ input }) => {
       const items = await listParcels(input.tenantId, input.limit, input.offset);
       return { success: true, data: items };
+    }),
+
+  /**
+   * Cursor-based paginated list for the parcels list page. [TASK-08]
+   * More efficient than offset pagination — no COUNT(*) needed.
+   */
+  listCursor: protectedProcedure
+    .input(
+      z.object({
+        tenantId: z.string().min(1).max(64),
+        limit: z.number().int().min(1).max(100).default(30),
+        cursor: z.number().int().positive().optional(),
+      }),
+    )
+    .query(async ({ input }) => {
+      const result = await listParcelsCursor(input.tenantId, input.limit, input.cursor);
+      return { success: true, data: result.items, nextCursor: result.nextCursor };
+    }),
+
+  /**
+   * Aggregate stats endpoint for the dashboard. [TASK-07]
+   * Uses COUNT GROUP BY — avoids fetching all parcel rows for client-side counting.
+   */
+  stats: protectedProcedure
+    .input(z.object({ tenantId: z.string().min(1).max(64) }))
+    .query(async ({ input }) => {
+      const data = await getParcelStats(input.tenantId);
+      return { success: true, data };
     }),
 
   /**

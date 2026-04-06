@@ -71,7 +71,8 @@ export function formatKoboAmount(kobo: number, currency = "NGN", locale = "en-NG
  */
 const VALID_TRANSITIONS: Record<string, string[]> = {
   PENDING: ["COLLECTED", "FAILED"],
-  COLLECTED: ["IN_TRANSIT", "FAILED"],
+  COLLECTED: ["IN_TRANSIT", "IN_WAREHOUSE", "FAILED"],
+  IN_WAREHOUSE: ["IN_TRANSIT", "FAILED"],
   IN_TRANSIT: ["OUT_FOR_DELIVERY", "FAILED", "RETURNED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "FAILED"],
   FAILED: ["IN_TRANSIT", "RETURNED"],

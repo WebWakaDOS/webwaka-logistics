@@ -1,8 +1,10 @@
 /**
  * Sendbox Webhook Handler [P04 — TASK 4]
  * Maps Sendbox-specific status codes to canonical WebWaka statuses.
+ * HMAC-SHA256 signature verification (BUG-07 fix).
  */
 
+import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response } from "express";
 import type { CanonicalDeliveryStatus } from "@webwaka/core";
 import { CommerceEvents } from "@webwaka/core";
@@ -12,7 +14,6 @@ import { publishCommerceEvent } from "../../events/commerceEventBus";
 
 const logger = createLogger("SendboxWebhook");
 
-// Sendbox status → canonical
 const SENDBOX_STATUS_MAP: Record<string, CanonicalDeliveryStatus> = {
   SHIPMENT_CREATED: "PENDING",
   PROCESSING: "PENDING",
@@ -25,18 +26,35 @@ const SENDBOX_STATUS_MAP: Record<string, CanonicalDeliveryStatus> = {
 };
 
 function verifySendboxSignature(req: Request): boolean {
-  const signature = req.headers["x-sendbox-webhook-secret"];
   const secret = process.env.SENDBOX_WEBHOOK_SECRET;
   if (!secret) {
-    logger.warn("[Sendbox] SENDBOX_WEBHOOK_SECRET not set — skipping signature verification");
-    return true;
+    if (process.env.NODE_ENV !== "production") {
+      logger.warn("[Sendbox] SENDBOX_WEBHOOK_SECRET not set — skipping verification in dev");
+      return true;
+    }
+    logger.warn("[Sendbox] SENDBOX_WEBHOOK_SECRET not configured in production — rejecting request");
+    return false;
   }
-  return signature === secret;
+
+  const signature = req.headers["x-sendbox-webhook-secret"] as string | undefined;
+  if (!signature) {
+    logger.warn("[Sendbox] Missing x-sendbox-webhook-secret header");
+    return false;
+  }
+
+  const rawBody: Buffer = (req as Request & { rawBody?: Buffer }).rawBody ?? Buffer.from(JSON.stringify(req.body));
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+
+  try {
+    return timingSafeEqual(Buffer.from(signature, "hex"), Buffer.from(expected, "hex"));
+  } catch {
+    return false;
+  }
 }
 
 export async function handleSendboxWebhook(req: Request, res: Response): Promise<void> {
   if (!verifySendboxSignature(req)) {
-    logger.warn("[Sendbox] Invalid webhook signature");
+    logger.warn("[Sendbox] Invalid or missing webhook signature");
     res.status(401).json({ error: "Invalid signature" });
     return;
   }
