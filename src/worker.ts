@@ -5,7 +5,7 @@
  * Replaces the Express/Node.js server with a Worker-native implementation.
  *
  * Architecture:
- *   - D1 for persistent storage (parcels, delivery_requests, users)
+ *   - D1 for persistent storage (logi_parcels, logi_delivery_requests, logi_users)
  *   - KV (SESSIONS_KV) for JWT session cache
  *   - KV (EVENTS) for outbound event queue
  *   - R2 (STORAGE) for proof-of-delivery images/signatures
@@ -13,7 +13,7 @@
  *
  * Public routes (no JWT required):
  *   GET  /health
- *   GET  /api/parcels/track/:trackingNumber
+ *   GET  /api/logi_parcels/track/:trackingNumber
  *   POST /api/webhooks/gig
  *   POST /api/webhooks/kwik
  *   POST /api/webhooks/sendbox
@@ -101,7 +101,7 @@ function genId(prefix: string): string {
 // ============================================================
 async function runMigrations(db: D1Database): Promise<void> {
   const MIGRATION_SQL = `
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS logi_users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       openId TEXT NOT NULL UNIQUE,
       name TEXT,
@@ -112,7 +112,7 @@ async function runMigrations(db: D1Database): Promise<void> {
       updatedAt INTEGER NOT NULL DEFAULT (unixepoch()),
       lastSignedIn INTEGER NOT NULL DEFAULT (unixepoch())
     );
-    CREATE TABLE IF NOT EXISTS parcels (
+    CREATE TABLE IF NOT EXISTS logi_parcels (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tenantId TEXT NOT NULL,
       trackingNumber TEXT NOT NULL,
@@ -143,7 +143,7 @@ async function runMigrations(db: D1Database): Promise<void> {
       updatedAt INTEGER NOT NULL DEFAULT (unixepoch()),
       deletedAt INTEGER
     );
-    CREATE TABLE IF NOT EXISTS parcel_updates (
+    CREATE TABLE IF NOT EXISTS logi_parcel_updates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tenantId TEXT NOT NULL,
       parcelId INTEGER NOT NULL,
@@ -155,7 +155,7 @@ async function runMigrations(db: D1Database): Promise<void> {
       recordedById INTEGER NOT NULL DEFAULT 0,
       createdAt INTEGER NOT NULL DEFAULT (unixepoch())
     );
-    CREATE TABLE IF NOT EXISTS proof_of_delivery (
+    CREATE TABLE IF NOT EXISTS logi_proof_of_delivery (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       tenantId TEXT NOT NULL,
       parcelId INTEGER NOT NULL,
@@ -169,7 +169,7 @@ async function runMigrations(db: D1Database): Promise<void> {
       createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
       deletedAt INTEGER
     );
-    CREATE TABLE IF NOT EXISTS delivery_requests (
+    CREATE TABLE IF NOT EXISTS logi_delivery_requests (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       orderId TEXT NOT NULL UNIQUE,
       tenantId TEXT NOT NULL,
@@ -185,11 +185,11 @@ async function runMigrations(db: D1Database): Promise<void> {
       createdAt INTEGER NOT NULL DEFAULT (unixepoch()),
       updatedAt INTEGER NOT NULL DEFAULT (unixepoch())
     );
-    CREATE TABLE IF NOT EXISTS schema_migrations (
+    CREATE TABLE IF NOT EXISTS logi_schema_migrations (
       version TEXT PRIMARY KEY,
       applied_at INTEGER NOT NULL DEFAULT (unixepoch())
     );
-    CREATE TABLE IF NOT EXISTS delivery_zones (
+    CREATE TABLE IF NOT EXISTS logi_delivery_zones (
       id                   TEXT    PRIMARY KEY,
       tenant_id            TEXT    NOT NULL,
       vendor_id            TEXT,
@@ -206,10 +206,10 @@ async function runMigrations(db: D1Database): Promise<void> {
       UNIQUE(tenant_id, vendor_id, state, lga)
     );
     CREATE INDEX IF NOT EXISTS idx_delivery_zones_tenant_state
-      ON delivery_zones(tenant_id, state, is_active);
+      ON logi_delivery_zones(tenant_id, state, is_active);
     CREATE INDEX IF NOT EXISTS idx_delivery_zones_vendor
-      ON delivery_zones(tenant_id, vendor_id, state, is_active);
-    CREATE TABLE IF NOT EXISTS order_tracking (
+      ON logi_delivery_zones(tenant_id, vendor_id, state, is_active);
+    CREATE TABLE IF NOT EXISTS logi_order_tracking (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
       orderId       TEXT    NOT NULL,
       tenantId      TEXT    NOT NULL,
@@ -225,8 +225,8 @@ async function runMigrations(db: D1Database): Promise<void> {
       UNIQUE(orderId, tenantId)
     );
     CREATE INDEX IF NOT EXISTS idx_order_tracking_tenant
-      ON order_tracking(tenantId, orderId);
-    CREATE TABLE IF NOT EXISTS tracking_tokens (
+      ON logi_order_tracking(tenantId, orderId);
+    CREATE TABLE IF NOT EXISTS logi_tracking_tokens (
       token         TEXT    PRIMARY KEY,
       orderId       TEXT    NOT NULL,
       tenantId      TEXT    NOT NULL,
@@ -235,7 +235,7 @@ async function runMigrations(db: D1Database): Promise<void> {
       createdAt     INTEGER NOT NULL DEFAULT (unixepoch())
     );
     CREATE INDEX IF NOT EXISTS idx_tracking_tokens_order
-      ON tracking_tokens(orderId, tenantId);
+      ON logi_tracking_tokens(orderId, tenantId);
   `;
   try {
     // D1 batch for multi-statement DDL
@@ -452,7 +452,7 @@ app.post('/api/admin/migrations/run', async (c) => {
 // ============================================================
 const PUBLIC_ROUTES = [
   { method: 'GET', path: '/health' },
-  { method: 'GET', path: '/api/parcels/track' },
+  { method: 'GET', path: '/api/logi_parcels/track' },
   { method: 'POST', path: '/api/webhooks/gig' },
   { method: 'POST', path: '/api/webhooks/kwik' },
   { method: 'POST', path: '/api/webhooks/sendbox' },
@@ -507,8 +507,8 @@ app.use('/api/*', async (c, next) => {
 // Parcels API
 // ============================================================
 
-// POST /api/parcels — create parcel
-app.post('/api/parcels', async (c) => {
+// POST /api/logi_parcels — create parcel
+app.post('/api/logi_parcels', async (c) => {
   const user = c.get('user' as never) as Record<string, unknown> | undefined;
   let body: Record<string, unknown>;
   try { body = await c.req.json(); } catch { return c.json({ success: false, error: 'Invalid JSON' }, 400); }
@@ -524,7 +524,7 @@ app.post('/api/parcels', async (c) => {
 
   try {
     const result = await c.env.DB.prepare(`
-      INSERT INTO parcels (tenantId, trackingNumber, status, priority, senderName, senderPhone, senderAddress,
+      INSERT INTO logi_parcels (tenantId, trackingNumber, status, priority, senderName, senderPhone, senderAddress,
         recipientName, recipientPhone, recipientAddress, recipientCity, recipientState,
         description, weightGrams, deliveryFeeKobo, insuranceValueKobo, currency,
         createdById, estimatedDeliveryAt, clientId, createdAt, updatedAt)
@@ -544,11 +544,11 @@ app.post('/api/parcels', async (c) => {
       now, now,
     ).run();
 
-    const parcel = await c.env.DB.prepare('SELECT * FROM parcels WHERE trackingNumber = ? LIMIT 1').bind(trackingNumber).first();
+    const parcel = await c.env.DB.prepare('SELECT * FROM logi_parcels WHERE trackingNumber = ? LIMIT 1').bind(trackingNumber).first();
 
     // Record initial status update
     await c.env.DB.prepare(`
-      INSERT INTO parcel_updates (tenantId, parcelId, status, notes, recordedById, createdAt)
+      INSERT INTO logi_parcel_updates (tenantId, parcelId, status, notes, recordedById, createdAt)
       VALUES (?, ?, 'PENDING', 'Parcel created and awaiting collection', ?, ?)
     `).bind(body.tenantId, (parcel as Record<string, unknown>)?.id ?? 0, userId, now).run();
 
@@ -566,30 +566,30 @@ app.post('/api/parcels', async (c) => {
   }
 });
 
-// GET /api/parcels — list parcels for tenant
-app.get('/api/parcels', async (c) => {
+// GET /api/logi_parcels — list logi_parcels for tenant
+app.get('/api/logi_parcels', async (c) => {
   const tenantId = c.req.query('tenantId');
   if (!tenantId) return c.json({ success: false, error: 'tenantId is required' }, 400);
   const limit = Math.min(parseInt(c.req.query('limit') ?? '50'), 100);
   const offset = parseInt(c.req.query('offset') ?? '0');
   try {
     const { results } = await c.env.DB.prepare(
-      'SELECT * FROM parcels WHERE tenantId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?'
+      'SELECT * FROM logi_parcels WHERE tenantId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT ? OFFSET ?'
     ).bind(tenantId, limit, offset).all();
     return c.json({ success: true, data: results });
   } catch (err) {
-    return c.json({ success: false, error: 'Failed to list parcels' }, 500);
+    return c.json({ success: false, error: 'Failed to list logi_parcels' }, 500);
   }
 });
 
-// GET /api/parcels/search — search by tracking number fragment
-app.get('/api/parcels/search', async (c) => {
+// GET /api/logi_parcels/search — search by tracking number fragment
+app.get('/api/logi_parcels/search', async (c) => {
   const tenantId = c.req.query('tenantId');
   const query = c.req.query('q');
   if (!tenantId || !query) return c.json({ success: false, error: 'tenantId and q are required' }, 400);
   try {
     const { results } = await c.env.DB.prepare(
-      'SELECT * FROM parcels WHERE tenantId = ? AND deletedAt IS NULL AND trackingNumber LIKE ? LIMIT 20'
+      'SELECT * FROM logi_parcels WHERE tenantId = ? AND deletedAt IS NULL AND trackingNumber LIKE ? LIMIT 20'
     ).bind(tenantId, `%${query}%`).all();
     return c.json({ success: true, data: results });
   } catch (err) {
@@ -597,16 +597,16 @@ app.get('/api/parcels/search', async (c) => {
   }
 });
 
-// GET /api/parcels/track/:trackingNumber — public customer tracking
-app.get('/api/parcels/track/:trackingNumber', async (c) => {
+// GET /api/logi_parcels/track/:trackingNumber — public customer tracking
+app.get('/api/logi_parcels/track/:trackingNumber', async (c) => {
   const trackingNumber = c.req.param('trackingNumber');
   try {
     const parcel = await c.env.DB.prepare(
-      'SELECT id, trackingNumber, status, priority, recipientCity, recipientState, estimatedDeliveryAt, actualDeliveryAt, createdAt FROM parcels WHERE trackingNumber = ? AND deletedAt IS NULL LIMIT 1'
+      'SELECT id, trackingNumber, status, priority, recipientCity, recipientState, estimatedDeliveryAt, actualDeliveryAt, createdAt FROM logi_parcels WHERE trackingNumber = ? AND deletedAt IS NULL LIMIT 1'
     ).bind(trackingNumber).first();
     if (!parcel) return c.json({ success: false, error: 'Parcel not found' }, 404);
     const { results: updates } = await c.env.DB.prepare(
-      'SELECT status, location, notes, createdAt FROM parcel_updates WHERE parcelId = ? ORDER BY createdAt DESC'
+      'SELECT status, location, notes, createdAt FROM logi_parcel_updates WHERE parcelId = ? ORDER BY createdAt DESC'
     ).bind((parcel as Record<string, unknown>).id).all();
     return c.json({ success: true, data: { parcel, updates } });
   } catch (err) {
@@ -614,21 +614,21 @@ app.get('/api/parcels/track/:trackingNumber', async (c) => {
   }
 });
 
-// GET /api/parcels/:id — get parcel by ID (authenticated)
-app.get('/api/parcels/:id', async (c) => {
+// GET /api/logi_parcels/:id — get parcel by ID (authenticated)
+app.get('/api/logi_parcels/:id', async (c) => {
   const tenantId = c.req.query('tenantId');
   const id = parseInt(c.req.param('id'));
   if (!tenantId) return c.json({ success: false, error: 'tenantId is required' }, 400);
   try {
     const parcel = await c.env.DB.prepare(
-      'SELECT * FROM parcels WHERE id = ? AND tenantId = ? AND deletedAt IS NULL LIMIT 1'
+      'SELECT * FROM logi_parcels WHERE id = ? AND tenantId = ? AND deletedAt IS NULL LIMIT 1'
     ).bind(id, tenantId).first();
     if (!parcel) return c.json({ success: false, error: 'Parcel not found' }, 404);
     const { results: updates } = await c.env.DB.prepare(
-      'SELECT * FROM parcel_updates WHERE parcelId = ? ORDER BY createdAt DESC'
+      'SELECT * FROM logi_parcel_updates WHERE parcelId = ? ORDER BY createdAt DESC'
     ).bind(id).all();
     const pod = await c.env.DB.prepare(
-      'SELECT * FROM proof_of_delivery WHERE parcelId = ? AND tenantId = ? AND deletedAt IS NULL LIMIT 1'
+      'SELECT * FROM logi_proof_of_delivery WHERE parcelId = ? AND tenantId = ? AND deletedAt IS NULL LIMIT 1'
     ).bind(id, tenantId).first();
     return c.json({ success: true, data: { parcel, updates, pod } });
   } catch (err) {
@@ -636,8 +636,8 @@ app.get('/api/parcels/:id', async (c) => {
   }
 });
 
-// PATCH /api/parcels/:id/status — update parcel status
-app.patch('/api/parcels/:id/status', async (c) => {
+// PATCH /api/logi_parcels/:id/status — update parcel status
+app.patch('/api/logi_parcels/:id/status', async (c) => {
   const user = c.get('user' as never) as Record<string, unknown> | undefined;
   const id = parseInt(c.req.param('id'));
   let body: Record<string, unknown>;
@@ -650,11 +650,11 @@ app.patch('/api/parcels/:id/status', async (c) => {
   const userId = (user as Record<string, unknown>)?.id ?? 0;
   try {
     await c.env.DB.prepare(
-      'UPDATE parcels SET status = ?, updatedAt = ? WHERE id = ? AND tenantId = ?'
+      'UPDATE logi_parcels SET status = ?, updatedAt = ? WHERE id = ? AND tenantId = ?'
     ).bind(status, now, id, tenantId).run();
 
     await c.env.DB.prepare(
-      'INSERT INTO parcel_updates (tenantId, parcelId, status, location, latitude, longitude, notes, recordedById, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO logi_parcel_updates (tenantId, parcelId, status, location, latitude, longitude, notes, recordedById, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     ).bind(tenantId, id, status, location ?? null, latitude ?? null, longitude ?? null, notes ?? null, userId, now).run();
 
     await publishEvent(c.env, 'parcel.status_updated', { tenantId, parcelId: id, status });
@@ -664,8 +664,8 @@ app.patch('/api/parcels/:id/status', async (c) => {
   }
 });
 
-// POST /api/parcels/:id/pod — capture proof of delivery
-app.post('/api/parcels/:id/pod', async (c) => {
+// POST /api/logi_parcels/:id/pod — capture proof of delivery
+app.post('/api/logi_parcels/:id/pod', async (c) => {
   const user = c.get('user' as never) as Record<string, unknown> | undefined;
   const id = parseInt(c.req.param('id'));
   let body: Record<string, unknown>;
@@ -706,20 +706,20 @@ app.post('/api/parcels/:id/pod', async (c) => {
 
   try {
     await c.env.DB.prepare(`
-      INSERT INTO proof_of_delivery (tenantId, parcelId, imageUrl, imageKey, signatureUrl, signatureKey, receivedByName, receivedByRelation, capturedById, createdAt)
+      INSERT INTO logi_proof_of_delivery (tenantId, parcelId, imageUrl, imageKey, signatureUrl, signatureKey, receivedByName, receivedByRelation, capturedById, createdAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(tenantId, id, imageUrl, imageKey, signatureUrl, signatureKey, receivedByName, receivedByRelation ?? 'Self', userId, now).run();
 
     await c.env.DB.prepare(
-      'UPDATE parcels SET status = ?, actualDeliveryAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?'
+      'UPDATE logi_parcels SET status = ?, actualDeliveryAt = ?, updatedAt = ? WHERE id = ? AND tenantId = ?'
     ).bind('DELIVERED', now, now, id, tenantId).run();
 
     await c.env.DB.prepare(
-      'INSERT INTO parcel_updates (tenantId, parcelId, status, notes, recordedById, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO logi_parcel_updates (tenantId, parcelId, status, notes, recordedById, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(tenantId, id, 'DELIVERED', `Delivered to ${receivedByName} (${receivedByRelation ?? 'Self'})`, userId, now).run();
 
     const pod = await c.env.DB.prepare(
-      'SELECT * FROM proof_of_delivery WHERE parcelId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 1'
+      'SELECT * FROM logi_proof_of_delivery WHERE parcelId = ? AND tenantId = ? AND deletedAt IS NULL ORDER BY createdAt DESC LIMIT 1'
     ).bind(id, tenantId).first();
 
     await publishEvent(c.env, 'parcel.delivered', { tenantId, parcelId: id, receivedByName });
@@ -729,15 +729,15 @@ app.post('/api/parcels/:id/pod', async (c) => {
   }
 });
 
-// DELETE /api/parcels/:id — soft delete
-app.delete('/api/parcels/:id', async (c) => {
+// DELETE /api/logi_parcels/:id — soft delete
+app.delete('/api/logi_parcels/:id', async (c) => {
   const tenantId = c.req.query('tenantId');
   const id = parseInt(c.req.param('id'));
   if (!tenantId) return c.json({ success: false, error: 'tenantId is required' }, 400);
   const now = Math.floor(Date.now() / 1000);
   try {
     await c.env.DB.prepare(
-      'UPDATE parcels SET deletedAt = ? WHERE id = ? AND tenantId = ?'
+      'UPDATE logi_parcels SET deletedAt = ? WHERE id = ? AND tenantId = ?'
     ).bind(now, id, tenantId).run();
     return c.json({ success: true });
   } catch (err) {
@@ -754,7 +754,7 @@ app.get('/api/delivery-requests/:orderId', async (c) => {
   const orderId = c.req.param('orderId');
   try {
     const req = await c.env.DB.prepare(
-      'SELECT * FROM delivery_requests WHERE orderId = ? LIMIT 1'
+      'SELECT * FROM logi_delivery_requests WHERE orderId = ? LIMIT 1'
     ).bind(orderId).first();
     if (!req) return c.json({ success: false, error: 'Delivery request not found' }, 404);
     return c.json({ success: true, data: req });
@@ -773,13 +773,13 @@ app.patch('/api/delivery-requests/:orderId/assign', async (c) => {
 
   const now = Math.floor(Date.now() / 1000);
   try {
-    const existing = await c.env.DB.prepare('SELECT * FROM delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
+    const existing = await c.env.DB.prepare('SELECT * FROM logi_delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
     if (!existing) return c.json({ success: false, error: 'Delivery request not found' }, 404);
     if (existing.status === 'DELIVERED' || existing.status === 'CANCELLED') {
       return c.json({ success: false, error: `Cannot assign — request is already ${existing.status}` }, 400);
     }
     await c.env.DB.prepare(
-      'UPDATE delivery_requests SET status = ?, assignedProvider = ?, updatedAt = ? WHERE orderId = ?'
+      'UPDATE logi_delivery_requests SET status = ?, assignedProvider = ?, updatedAt = ? WHERE orderId = ?'
     ).bind('ASSIGNED', provider, now, orderId).run();
     return c.json({ success: true, orderId, assignedProvider: provider });
   } catch (err) {
@@ -796,13 +796,13 @@ app.patch('/api/delivery-requests/:orderId/cancel', async (c) => {
 
   const now = Math.floor(Date.now() / 1000);
   try {
-    const existing = await c.env.DB.prepare('SELECT * FROM delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
+    const existing = await c.env.DB.prepare('SELECT * FROM logi_delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
     if (!existing) return c.json({ success: false, error: 'Delivery request not found' }, 404);
     if (existing.status === 'DELIVERED' || existing.status === 'CANCELLED') {
       return c.json({ success: false, error: `Cannot cancel — request is already ${existing.status}` }, 400);
     }
     await c.env.DB.prepare(
-      'UPDATE delivery_requests SET status = ?, updatedAt = ? WHERE orderId = ?'
+      'UPDATE logi_delivery_requests SET status = ?, updatedAt = ? WHERE orderId = ?'
     ).bind('CANCELLED', now, orderId).run();
     await publishEvent(c.env, 'delivery.status_changed', {
       orderId, tenantId: existing.tenantId,
@@ -852,28 +852,28 @@ app.get('/api/delivery-zones', async (c) => {
     if (vendorId && state) {
       query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
                       estimated_days_min, estimated_days_max, is_active
-               FROM delivery_zones
+               FROM logi_delivery_zones
                WHERE tenant_id = ? AND vendor_id = ? AND state = ? AND is_active = 1
                ORDER BY state ASC, lga ASC`;
       bindings = [tenantId, vendorId, state];
     } else if (vendorId) {
       query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
                       estimated_days_min, estimated_days_max, is_active
-               FROM delivery_zones
+               FROM logi_delivery_zones
                WHERE tenant_id = ? AND vendor_id = ? AND is_active = 1
                ORDER BY state ASC, lga ASC`;
       bindings = [tenantId, vendorId];
     } else if (state) {
       query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
                       estimated_days_min, estimated_days_max, is_active
-               FROM delivery_zones
+               FROM logi_delivery_zones
                WHERE tenant_id = ? AND (vendor_id IS NULL OR vendor_id = '') AND state = ? AND is_active = 1
                ORDER BY lga ASC`;
       bindings = [tenantId, state];
     } else {
       query = `SELECT id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
                       estimated_days_min, estimated_days_max, is_active
-               FROM delivery_zones
+               FROM logi_delivery_zones
                WHERE tenant_id = ? AND is_active = 1
                ORDER BY state ASC, lga ASC`;
       bindings = [tenantId];
@@ -925,7 +925,7 @@ app.post('/api/delivery-zones', async (c) => {
   const vendorId = body.vendor_id?.trim() ?? null;
   try {
     await c.env.DB.prepare(
-      `INSERT INTO delivery_zones
+      `INSERT INTO logi_delivery_zones
          (id, tenant_id, vendor_id, state, lga, base_fee, per_kg_fee, free_above,
           is_active, estimated_days_min, estimated_days_max, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -980,13 +980,13 @@ app.get('/api/delivery-zones/estimate', async (c) => {
       if (vendorId) {
         zone = await c.env.DB.prepare(
           `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
-           FROM delivery_zones
+           FROM logi_delivery_zones
            WHERE tenant_id=? AND vendor_id=? AND state=? AND lga=? AND is_active=1 LIMIT 1`
         ).bind(tenantId, vendorId, state, lga).first<ZoneRow>();
       } else {
         zone = await c.env.DB.prepare(
           `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
-           FROM delivery_zones
+           FROM logi_delivery_zones
            WHERE tenant_id=? AND (vendor_id IS NULL OR vendor_id='') AND state=? AND lga=? AND is_active=1 LIMIT 1`
         ).bind(tenantId, state, lga).first<ZoneRow>();
       }
@@ -996,13 +996,13 @@ app.get('/api/delivery-zones/estimate', async (c) => {
       if (vendorId) {
         zone = await c.env.DB.prepare(
           `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
-           FROM delivery_zones
+           FROM logi_delivery_zones
            WHERE tenant_id=? AND vendor_id=? AND state=? AND (lga IS NULL OR lga='') AND is_active=1 LIMIT 1`
         ).bind(tenantId, vendorId, state).first<ZoneRow>();
       } else {
         zone = await c.env.DB.prepare(
           `SELECT base_fee, per_kg_fee, free_above, estimated_days_min, estimated_days_max
-           FROM delivery_zones
+           FROM logi_delivery_zones
            WHERE tenant_id=? AND (vendor_id IS NULL OR vendor_id='') AND state=? AND (lga IS NULL OR lga='') AND is_active=1 LIMIT 1`
         ).bind(tenantId, state).first<ZoneRow>();
       }
@@ -1116,7 +1116,7 @@ app.post('/internal/tracking-token', async (c) => {
   // Persist token for lookup
   try {
     await c.env.DB.prepare(
-      'INSERT OR REPLACE INTO tracking_tokens (token, orderId, tenantId, sourceModule, expiresAt, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT OR REPLACE INTO logi_tracking_tokens (token, orderId, tenantId, sourceModule, expiresAt, createdAt) VALUES (?, ?, ?, ?, ?, ?)'
     ).bind(token, orderId, tenantId, sourceModule ?? 'commerce', expiresAt, now).run();
   } catch (err) {
     log('WARN', 'TrackingToken', 'Failed to persist token', { err: String(err) });
@@ -1176,12 +1176,12 @@ app.get('/api/orders/track', async (c) => {
   try {
     // Look up order tracking record
     const tracking = await c.env.DB.prepare(
-      'SELECT * FROM order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
+      'SELECT * FROM logi_order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
     ).bind(orderId, tenantId).first() as Record<string, unknown> | null;
 
     // Also look up the delivery request for provider/status details
     const deliveryReq = await c.env.DB.prepare(
-      'SELECT status, assignedProvider, internalDeliveryId, updatedAt FROM delivery_requests WHERE orderId = ? LIMIT 1'
+      'SELECT status, assignedProvider, internalDeliveryId, updatedAt FROM logi_delivery_requests WHERE orderId = ? LIMIT 1'
     ).bind(orderId).first() as Record<string, unknown> | null;
 
     if (!tracking && !deliveryReq) {
@@ -1237,7 +1237,7 @@ app.post('/api/events/commerce', async (c) => {
     }
 
     // Idempotency check
-    const existing = await c.env.DB.prepare('SELECT id FROM delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first();
+    const existing = await c.env.DB.prepare('SELECT id FROM logi_delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first();
     if (existing) {
       log('INFO', 'CommerceEvents', 'Duplicate orderId — skipping', { orderId });
       return c.json({ success: true, note: 'duplicate' });
@@ -1246,7 +1246,7 @@ app.post('/api/events/commerce', async (c) => {
     const internalDeliveryId = genId('DR');
     const now = Math.floor(Date.now() / 1000);
     await c.env.DB.prepare(`
-      INSERT INTO delivery_requests (orderId, tenantId, sourceModule, vendorId, pickupAddress, deliveryAddress, itemsSummary, weightKg, status, internalDeliveryId, createdAt, updatedAt)
+      INSERT INTO logi_delivery_requests (orderId, tenantId, sourceModule, vendorId, pickupAddress, deliveryAddress, itemsSummary, weightKg, status, internalDeliveryId, createdAt, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PICKING_PROVIDER', ?, ?, ?)
     `).bind(
       orderId, tenantId, sourceModule, vendorId ?? null,
@@ -1270,7 +1270,7 @@ app.post('/api/events/commerce', async (c) => {
     return c.json({ success: true });
   }
 
-  // T-CVC-02: Consume delivery.status_changed events to update order_tracking table
+  // T-CVC-02: Consume delivery.status_changed events to update logi_order_tracking table
   if (eventType === 'delivery.status_changed') {
     if (!payload) return c.json({ success: false, error: 'Payload is required' }, 400);
     const { orderId, tenantId, status, provider, trackingUrl, estimatedDelivery, notes } = payload as Record<string, string>;
@@ -1292,7 +1292,7 @@ app.post('/api/events/commerce', async (c) => {
     try {
       // Fetch existing record to append to statusHistory
       const existing = await c.env.DB.prepare(
-        'SELECT statusHistory FROM order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
+        'SELECT statusHistory FROM logi_order_tracking WHERE orderId = ? AND tenantId = ? LIMIT 1'
       ).bind(orderId, tenantId).first() as Record<string, unknown> | null;
 
       const history: Array<{ status: string; timestamp: number; provider?: string; notes?: string }> =
@@ -1300,7 +1300,7 @@ app.post('/api/events/commerce', async (c) => {
       history.push({ status, timestamp: now, ...(provider ? { provider } : {}), ...(notes ? { notes } : {}) });
 
       await c.env.DB.prepare(`
-        INSERT INTO order_tracking (orderId, tenantId, sourceModule, status, provider, trackingUrl, estimatedDelivery, notes, statusHistory, createdAt, updatedAt)
+        INSERT INTO logi_order_tracking (orderId, tenantId, sourceModule, status, provider, trackingUrl, estimatedDelivery, notes, statusHistory, createdAt, updatedAt)
         VALUES (?, ?, 'commerce', ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(orderId, tenantId) DO UPDATE SET
           status = excluded.status,
@@ -1316,10 +1316,10 @@ app.post('/api/events/commerce', async (c) => {
         JSON.stringify(history), now, now,
       ).run();
 
-      log('INFO', 'CommerceEvents', 'order_tracking updated via delivery.status_changed', { orderId, status });
+      log('INFO', 'CommerceEvents', 'logi_order_tracking updated via delivery.status_changed', { orderId, status });
       return c.json({ success: true });
     } catch (err) {
-      log('ERROR', 'CommerceEvents', 'Failed to update order_tracking', { err: String(err) });
+      log('ERROR', 'CommerceEvents', 'Failed to update logi_order_tracking', { err: String(err) });
       return c.json({ success: false, error: 'Failed to update tracking record' }, 500);
     }
   }
@@ -1350,12 +1350,12 @@ async function handleProviderWebhook(
   const canonicalStatus = statusMap[providerStatus];
   if (!canonicalStatus) return c.json({ ok: true, note: 'Unknown status — ignored' });
 
-  const existing = await c.env.DB.prepare('SELECT * FROM delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
+  const existing = await c.env.DB.prepare('SELECT * FROM logi_delivery_requests WHERE orderId = ? LIMIT 1').bind(orderId).first() as Record<string, unknown> | null;
   if (!existing) return c.json({ error: 'Delivery request not found' }, 404);
 
   const now = Math.floor(Date.now() / 1000);
   await c.env.DB.prepare(
-    'UPDATE delivery_requests SET status = ?, assignedProvider = ?, updatedAt = ? WHERE orderId = ?'
+    'UPDATE logi_delivery_requests SET status = ?, assignedProvider = ?, updatedAt = ? WHERE orderId = ?'
   ).bind(canonicalStatus, provider, now, orderId).run();
 
   await publishEvent(c.env, 'delivery.status_changed', {
@@ -1402,7 +1402,7 @@ app.post('/internal/transport-events', async (c) => {
     const trackingNumber = generateTrackingNumber();
     const weightGrams = Math.round((data.weight_kg ?? 0) * 1000);
     await c.env.DB.prepare(`
-      INSERT INTO parcels (tenantId, trackingNumber, status, priority, senderName, senderPhone, senderAddress,
+      INSERT INTO logi_parcels (tenantId, trackingNumber, status, priority, senderName, senderPhone, senderAddress,
         recipientName, recipientPhone, recipientAddress, recipientCity, recipientState,
         description, weightGrams, deliveryFeeKobo, insuranceValueKobo, currency,
         createdById, tripId, waybillId, seatAssignmentStatus, createdAt, updatedAt)
@@ -1426,11 +1426,11 @@ app.post('/internal/transport-events', async (c) => {
 
     if (data.new_state === 'in_transit') {
       await c.env.DB.prepare(
-        "UPDATE parcels SET status = 'IN_TRANSIT', updatedAt = ? WHERE tripId = ? AND status = 'PENDING'"
+        "UPDATE logi_parcels SET status = 'IN_TRANSIT', updatedAt = ? WHERE tripId = ? AND status = 'PENDING'"
       ).bind(now, data.trip_id).run();
     } else if (data.new_state === 'completed') {
       await c.env.DB.prepare(
-        "UPDATE parcels SET status = 'DELIVERED', actualDeliveryAt = ?, updatedAt = ? WHERE tripId = ? AND status = 'IN_TRANSIT'"
+        "UPDATE logi_parcels SET status = 'DELIVERED', actualDeliveryAt = ?, updatedAt = ? WHERE tripId = ? AND status = 'IN_TRANSIT'"
       ).bind(now, now, data.trip_id).run();
     }
     return c.json({ received: true });

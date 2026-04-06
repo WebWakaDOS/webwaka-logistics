@@ -9,10 +9,10 @@
 -- ════════════════════════════════════════════════════════════════════════════
 
 -- Riders table: KYC state machine PENDING → VERIFYING → ACTIVE | REJECTED
-CREATE TABLE IF NOT EXISTS riders (
+CREATE TABLE IF NOT EXISTS logi_riders (
   id               INTEGER  PRIMARY KEY AUTOINCREMENT,
   tenantId         TEXT     NOT NULL,
-  userId           INTEGER,                   -- FK to users.id (nullable)
+  userId           INTEGER,                   -- FK to logi_users.id (nullable)
   fullName         TEXT     NOT NULL,
   phone            TEXT     NOT NULL,
   address          TEXT     NOT NULL,
@@ -33,19 +33,19 @@ CREATE TABLE IF NOT EXISTS riders (
 );
 
 CREATE INDEX IF NOT EXISTS idx_riders_tenant
-  ON riders(tenantId);
+  ON logi_riders(tenantId);
 
 CREATE INDEX IF NOT EXISTS idx_riders_tenant_status
-  ON riders(tenantId, kycStatus);
+  ON logi_riders(tenantId, kycStatus);
 
 CREATE INDEX IF NOT EXISTS idx_riders_user
-  ON riders(tenantId, userId);
+  ON logi_riders(tenantId, userId);
 
--- Guarantors table: linked to riders (min 1 per rider, max 2)
-CREATE TABLE IF NOT EXISTS guarantors (
+-- Guarantors table: linked to logi_riders (min 1 per rider, max 2)
+CREATE TABLE IF NOT EXISTS logi_guarantors (
   id           INTEGER PRIMARY KEY AUTOINCREMENT,
   tenantId     TEXT    NOT NULL,
-  riderId      INTEGER NOT NULL REFERENCES riders(id),
+  riderId      INTEGER NOT NULL REFERENCES logi_riders(id),
   fullName     TEXT    NOT NULL,
   phone        TEXT    NOT NULL,
   address      TEXT    NOT NULL,
@@ -56,10 +56,10 @@ CREATE TABLE IF NOT EXISTS guarantors (
 );
 
 CREATE INDEX IF NOT EXISTS idx_guarantors_rider
-  ON guarantors(tenantId, riderId);
+  ON logi_guarantors(tenantId, riderId);
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Record this migration
 -- ════════════════════════════════════════════════════════════════════════════
-INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+INSERT OR IGNORE INTO logi_schema_migrations (version, applied_at)
 VALUES ('004_rider_kyc', strftime('%s', 'now'));

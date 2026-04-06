@@ -4,7 +4,7 @@
 -- ============================================================
 -- USERS
 -- ============================================================
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE IF NOT EXISTS logi_users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   openId TEXT NOT NULL UNIQUE,
   name TEXT,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- ============================================================
 -- PARCELS
 -- ============================================================
-CREATE TABLE IF NOT EXISTS parcels (
+CREATE TABLE IF NOT EXISTS logi_parcels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenantId TEXT NOT NULL,
   trackingNumber TEXT NOT NULL,
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS parcels (
 -- ============================================================
 -- PARCEL UPDATES (immutable event log)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS parcel_updates (
+CREATE TABLE IF NOT EXISTS logi_parcel_updates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenantId TEXT NOT NULL,
   parcelId INTEGER NOT NULL,
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS parcel_updates (
 -- ============================================================
 -- PROOF OF DELIVERY
 -- ============================================================
-CREATE TABLE IF NOT EXISTS proof_of_delivery (
+CREATE TABLE IF NOT EXISTS logi_proof_of_delivery (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenantId TEXT NOT NULL,
   parcelId INTEGER NOT NULL,
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS proof_of_delivery (
 -- ============================================================
 -- DELIVERY REQUESTS (P04 Commerce ↔ Logistics event contract)
 -- ============================================================
-CREATE TABLE IF NOT EXISTS delivery_requests (
+CREATE TABLE IF NOT EXISTS logi_delivery_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   orderId TEXT NOT NULL UNIQUE,
   tenantId TEXT NOT NULL,
@@ -103,8 +103,8 @@ CREATE TABLE IF NOT EXISTS delivery_requests (
 -- ============================================================
 -- SCHEMA MIGRATIONS TRACKER
 -- ============================================================
-CREATE TABLE IF NOT EXISTS schema_migrations (
+CREATE TABLE IF NOT EXISTS logi_schema_migrations (
   version TEXT PRIMARY KEY,
   applied_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
-INSERT OR IGNORE INTO schema_migrations (version) VALUES ('001_logistics_schema');
+INSERT OR IGNORE INTO logi_schema_migrations (version) VALUES ('001_logistics_schema');

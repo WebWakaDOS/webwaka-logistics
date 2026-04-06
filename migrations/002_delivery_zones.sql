@@ -1,7 +1,7 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- Migration 002: Delivery Zones (T-CVC-01)
 --
--- Centralises the delivery_zones table from webwaka-commerce (single-vendor
+-- Centralises the logi_delivery_zones table from webwaka-commerce (single-vendor
 -- and multi-vendor) into the Logistics suite.
 --
 -- Invariant: Build Once, Use Infinitely — this is now the single source of
@@ -11,7 +11,7 @@
 -- Multi-Tenant: all rows are scoped by tenant_id.
 -- ════════════════════════════════════════════════════════════════════════════
 
-CREATE TABLE IF NOT EXISTS delivery_zones (
+CREATE TABLE IF NOT EXISTS logi_delivery_zones (
   id                   TEXT    PRIMARY KEY,          -- dz_{ts}_{rand}
   tenant_id            TEXT    NOT NULL,
   vendor_id            TEXT,                         -- NULL = tenant-wide zone (single-vendor)
@@ -29,13 +29,13 @@ CREATE TABLE IF NOT EXISTS delivery_zones (
 );
 
 CREATE INDEX IF NOT EXISTS idx_delivery_zones_tenant_state
-  ON delivery_zones(tenant_id, state, is_active);
+  ON logi_delivery_zones(tenant_id, state, is_active);
 
 CREATE INDEX IF NOT EXISTS idx_delivery_zones_vendor
-  ON delivery_zones(tenant_id, vendor_id, state, is_active);
+  ON logi_delivery_zones(tenant_id, vendor_id, state, is_active);
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- Record this migration
 -- ════════════════════════════════════════════════════════════════════════════
-INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+INSERT OR IGNORE INTO logi_schema_migrations (version, applied_at)
 VALUES ('002_delivery_zones', strftime('%s', 'now'));

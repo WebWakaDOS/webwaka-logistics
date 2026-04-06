@@ -1,17 +1,11 @@
+# webwaka-logistics — Cloudflare Workers configuration
+# Shared 2-DB model: webwaka-production-db + webwaka-staging-db
+# Table prefix: logi_
+
 name = "webwaka-logistics"
 main = "src/worker.ts"
 compatibility_date = "2024-12-01"
 compatibility_flags = ["nodejs_compat"]
-
-# ─── Default (Development) Environment ───────────────────────────────────────
-[vars]
-ENVIRONMENT = "development"
-LOGISTICS_PORTAL_URL = "http://localhost:5173"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "webwaka-logistics-db"
-database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
 
 [[kv_namespaces]]
 binding = "SESSIONS_KV"
@@ -25,18 +19,16 @@ id = "ed98b167646d4469a4f03a2c9ab95781"
 binding = "STORAGE"
 bucket_name = "webwaka-logistics-storage-dev"
 
-# ─── Staging Environment ──────────────────────────────────────────────────────
+# ── Staging Environment ─────────────────────────────────────────────────────
 [env.staging]
 name = "webwaka-logistics-api-staging"
-
-[env.staging.vars]
-ENVIRONMENT = "staging"
-LOGISTICS_PORTAL_URL = "https://logistics-staging.webwaka.ng"
+vars = { ENVIRONMENT = "staging", LOGISTICS_PORTAL_URL = "https://logistics-staging.webwaka.ng" }
 
 [[env.staging.d1_databases]]
 binding = "DB"
-database_name = "webwaka-logistics-db-staging"
-database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
+database_name = "webwaka-staging-db"
+database_id = "d7278ca0-2408-40d5-a08b-d8456601f667"
+migrations_dir = "migrations"
 
 [[env.staging.kv_namespaces]]
 binding = "SESSIONS_KV"
@@ -50,40 +42,25 @@ id = "ed98b167646d4469a4f03a2c9ab95781"
 binding = "STORAGE"
 bucket_name = "webwaka-logistics-storage-staging"
 
-# ─── Production Environment ───────────────────────────────────────────────────
+# ── Production Environment ──────────────────────────────────────────────────
 [env.production]
 name = "webwaka-logistics-api-prod"
-
-[env.production.vars]
-ENVIRONMENT = "production"
-LOGISTICS_PORTAL_URL = "https://logistics.webwaka.ng"
+vars = { ENVIRONMENT = "production", LOGISTICS_PORTAL_URL = "https://logistics.webwaka.ng" }
 
 [[env.production.d1_databases]]
 binding = "DB"
-database_name = "webwaka-logistics-db-prod"
-database_id = "62d267a4-4e4f-4ecc-bf85-f63d1585ce78"
+database_name = "webwaka-production-db"
+database_id = "d01940d3-d69e-4455-94ba-bc2404cb3872"
+migrations_dir = "migrations"
 
-# NOTE: SESSIONS_KV and EVENTS KV IDs below are DIFFERENT from staging/dev.
-# Create production KV namespaces via:
-#   wrangler kv:namespace create SESSIONS_KV --env production
-#   wrangler kv:namespace create EVENTS --env production
-# Then replace the placeholder IDs below with the real ones.
 [[env.production.kv_namespaces]]
 binding = "SESSIONS_KV"
-id = "REPLACE_WITH_PRODUCTION_SESSIONS_KV_ID"
+id = "ef463888d10e487ba4fe3563f7f71964"
 
 [[env.production.kv_namespaces]]
 binding = "EVENTS"
-id = "REPLACE_WITH_PRODUCTION_EVENTS_KV_ID"
+id = "ed98b167646d4469a4f03a2c9ab95781"
 
 [[env.production.r2_buckets]]
 binding = "STORAGE"
 bucket_name = "webwaka-logistics-storage"
-
-# ─── Secrets (set via: wrangler secret put <KEY> --env <staging|production>) ──
-# JWT_SECRET              — HS256 signing secret for user JWTs
-# INTER_SERVICE_SECRET    — shared secret for inter-service calls (commerce → logistics)
-# GIG_WEBHOOK_SECRET      — HMAC secret for GIG courier webhook verification
-# KWIK_WEBHOOK_SECRET     — HMAC secret for Kwik courier webhook verification
-# SENDBOX_WEBHOOK_SECRET  — HMAC secret for Sendbox courier webhook verification
-# TRACKING_SECRET         — HMAC-SHA256 secret for signing tracking tokens (T-CVC-02)
