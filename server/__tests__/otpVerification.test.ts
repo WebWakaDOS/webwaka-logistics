@@ -58,11 +58,15 @@ describe("generateOtp", () => {
     expect(otp).toMatch(/^\d{4}$/);
   });
 
-  it("generates values in range 1000–9999", () => {
+  it("generates values in range 0000–9999 (zero-padded 4-digit code)", () => {
+    // TASK-12 / B5 fix: OTP range is 0000-9999 (inclusive), zero-padded.
+    // Previous spec incorrectly restricted to 1000-9999; full range is required
+    // so that codes like "0042" are valid delivery OTPs.
     for (let i = 0; i < 20; i++) {
       const otp = generateOtp();
+      expect(otp).toMatch(/^\d{4}$/); // always 4 digits, zero-padded
       const n = parseInt(otp, 10);
-      expect(n).toBeGreaterThanOrEqual(1000);
+      expect(n).toBeGreaterThanOrEqual(0);
       expect(n).toBeLessThanOrEqual(9999);
     }
   });
@@ -191,13 +195,13 @@ describe("sendOtpSms — @webwaka/core Termii provider", () => {
     expect(result).toBe(true);
     expect(sendTermiiSms).toHaveBeenCalledOnce();
 
-    const [phone, message, options] = vi.mocked(sendTermiiSms).mock.calls[0];
+    // sendTermiiSms(to, message, apiKey, senderId) — positional args per @webwaka/core v1.6.1 sms.d.ts
+    const [phone, message, apiKey, senderId] = vi.mocked(sendTermiiSms).mock.calls[0];
     expect(phone).toBe("08012345678");
     expect(message).toContain("7391");
     expect(message).toContain("WW-20260403-ABC123");
-    expect(options.apiKey).toBe("test-termii-key");
-    expect(options.channel).toBe("generic");
-    expect(options.senderId).toBe("WebWaka");
+    expect(apiKey).toBe("test-termii-key");
+    expect(senderId).toBe("WebWaka");
   });
 
   it("returns false when Termii returns an error", async () => {

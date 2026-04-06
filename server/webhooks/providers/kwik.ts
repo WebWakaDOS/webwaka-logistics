@@ -6,7 +6,7 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import type { Request, Response } from "express";
-import type { CanonicalDeliveryStatus } from "@webwaka/core";
+import type { CanonicalDeliveryStatus } from "../../../shared/types";
 import { CommerceEvents } from "@webwaka/core";
 import { createLogger } from "../../logger";
 import { getDeliveryRequestByOrderId, updateDeliveryRequestStatus } from "../../delivery.db";

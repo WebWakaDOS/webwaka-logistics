@@ -5,6 +5,7 @@
  */
 
 import { nanoid } from "nanoid";
+import { randomBytes } from "crypto";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tracking Number Generation
@@ -14,12 +15,15 @@ import { nanoid } from "nanoid";
  * Generates a unique WebWaka tracking number.
  * Format: WW + 10 uppercase alphanumeric characters = 12 chars total.
  * Example: WWAB3XK9P2MQ
+ *
+ * Uses crypto.randomBytes (CSPRNG) — no Math.random() [TASK-12 / B5 fix].
  */
 export function generateTrackingNumber(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const bytes = randomBytes(10);
   let suffix = "";
   for (let i = 0; i < 10; i++) {
-    suffix += chars[Math.floor(Math.random() * chars.length)];
+    suffix += chars[bytes[i] % chars.length];
   }
   return `WW${suffix}`;
 }

@@ -105,11 +105,7 @@ export async function sendOtpSms(
     `Valid for 10 minutes. Do not share with anyone else.`;
 
   try {
-    const result = await sendTermiiSms(recipientPhone, message, {
-      apiKey,
-      senderId: "WebWaka",
-      channel: "generic",
-    });
+    const result = await sendTermiiSms(recipientPhone, message, apiKey, "WebWaka");
 
     if (!result.success) {
       logger.warn("Termii SMS failed", { phone: recipientPhone, error: result.error });

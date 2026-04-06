@@ -132,7 +132,7 @@ export async function getAICompletion(
     // Validate: all original IDs must appear exactly once
     const inputIdSet = new Set(originalIds);
     const validIds = (parsed as number[]).filter(id => inputIdSet.has(id));
-    const uniqueValidIds = [...new Set(validIds)];
+    const uniqueValidIds = Array.from(new Set(validIds));
 
     if (uniqueValidIds.length !== stops.length) {
       logger.warn("AI returned incomplete/duplicate IDs — using original order", {

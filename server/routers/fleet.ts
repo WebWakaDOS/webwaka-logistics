@@ -70,11 +70,7 @@ export const fleetRouter = router({
           `Parcel: ${hit.trackingNumber}. Please be available to receive your package.`;
 
         const sent = ENV.termiiApiKey
-          ? await sendTermiiSms(hit.recipientPhone, geofenceMessage, {
-              apiKey: ENV.termiiApiKey,
-              senderId: "WebWaka",
-              channel: "generic",
-            })
+          ? await sendTermiiSms(hit.recipientPhone, geofenceMessage, ENV.termiiApiKey, "WebWaka")
               .then(r => r.success)
               .catch(() => false)
           : false;

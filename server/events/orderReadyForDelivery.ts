@@ -3,11 +3,8 @@
  * Governance: idempotent, tenant-isolated, validates all required fields.
  */
 
-import {
-  CommerceEvents,
-  OrderReadyForDeliveryPayload,
-  DeliveryQuotePayload,
-} from "@webwaka/core";
+import { CommerceEvents } from "@webwaka/core";
+import type { OrderReadyForDeliveryPayload, DeliveryQuotePayload } from "../../shared/types";
 import { createLogger } from "../logger";
 import { createDeliveryRequest, getDeliveryRequestByOrderId } from "../delivery.db";
 import { publishCommerceEvent } from "./commerceEventBus";

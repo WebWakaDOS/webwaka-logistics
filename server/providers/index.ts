@@ -3,7 +3,7 @@
  * Manages active providers and computes fee estimates per route.
  */
 
-import type { ProviderQuote, DeliveryAddress } from "@webwaka/core";
+import type { ProviderQuote, DeliveryAddress } from "../../shared/types";
 
 export interface DeliveryProvider {
   id: string;

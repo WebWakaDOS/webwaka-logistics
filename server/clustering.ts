@@ -188,11 +188,11 @@ export function clusterParcels(
 
   // Convert map to sorted cluster array
   const unsorted: Omit<ParcelCluster, "shortLabel">[] = [];
-  for (const [key, { strategy, parcels: clusterParcels }] of buckets.entries()) {
+  for (const [key, { strategy, parcels: clusterParcels }] of Array.from(buckets.entries())) {
     const centroid = computeCentroid(clusterParcels);
     const label = deriveCityLabel(clusterParcels);
-    const totalFeeKobo = clusterParcels.reduce((s, p) => s + p.deliveryFeeKobo, 0);
-    const totalWeightGrams = clusterParcels.reduce((s, p) => s + p.weightGrams, 0);
+    const totalFeeKobo = clusterParcels.reduce((s: number, p: ClusterableParcel) => s + p.deliveryFeeKobo, 0);
+    const totalWeightGrams = clusterParcels.reduce((s: number, p: ClusterableParcel) => s + p.weightGrams, 0);
 
     unsorted.push({
       key,

@@ -4,7 +4,8 @@
  * Event type strings must ONLY come from @webwaka/core CommerceEvents.
  */
 
-import type { CommerceEventType, PlatformEvent } from "@webwaka/core";
+import type { CommerceEventType } from "@webwaka/core";
+import type { PlatformEvent } from "../../shared/types";
 import { createLogger } from "../logger";
 
 const logger = createLogger("CommerceEventBus");

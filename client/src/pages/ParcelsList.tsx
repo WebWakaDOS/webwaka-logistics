@@ -18,11 +18,12 @@ import { useTenantId } from "@/hooks/useTenantId";
 import { useOnlineStatus } from "@/hooks/useOnlineStatus";
 import { formatKobo, formatWAT } from "@/lib/i18n";
 import { trpc } from "@/lib/trpc";
+import type { Parcel as ParcelRow } from "@shared/types";
 import type { ParcelStatus } from "@/components/StatusBadge";
 
 const PAGE_SIZE = 30;
 
-type ParcelRow = NonNullable<ReturnType<typeof trpc.parcels.listCursor.useQuery>["data"]>["data"][number];
+// ParcelRow imported from @shared/types (avoids brittle tRPC ReturnType nesting — TS2339)
 
 export default function ParcelsList() {
   const { t, locale } = useI18n();
